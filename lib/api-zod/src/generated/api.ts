@@ -14,3 +14,46 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Uses AI to generate a context-aware narrative event based on current game state
+ * @summary Generate a narrative event
+ */
+export const GenerateGameEventBody = zod.object({
+  era: zod.number().describe("Current civilization era (1-4)"),
+  elementsDiscovered: zod
+    .array(zod.string())
+    .describe("List of discovered element symbols"),
+  buildingsBuilt: zod
+    .array(zod.string())
+    .describe("Names of constructed buildings"),
+  technologiesResearched: zod
+    .array(zod.string())
+    .describe("Names of researched technologies"),
+  credits: zod.number().describe("Current credit balance"),
+  population: zod.number().describe("Current population"),
+  factionNames: zod
+    .array(zod.string())
+    .optional()
+    .describe("Names of discovered alien factions"),
+  recentEventTitle: zod
+    .string()
+    .optional()
+    .describe("Title of the most recent event (for variety)"),
+});
+
+export const GenerateGameEventResponse = zod.object({
+  id: zod.string(),
+  title: zod.string(),
+  description: zod.string(),
+  type: zod.enum(["random", "story", "discovery", "threat"]),
+  choices: zod.array(
+    zod.object({
+      id: zod.string(),
+      text: zod.string(),
+      consequence: zod.string(),
+      resourceChanges: zod.record(zod.string(), zod.number()).optional(),
+      reputationChange: zod.number().optional(),
+    }),
+  ),
+});

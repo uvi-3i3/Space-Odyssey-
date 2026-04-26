@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: game
+    description: Game operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /game/generate-event:
+    post:
+      operationId: generateGameEvent
+      tags: [game]
+      summary: Generate a narrative event
+      description: Uses AI to generate a context-aware narrative event based on current game state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateEventRequest"
+      responses:
+        "200":
+          description: Generated event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeneratedEvent"
+        "500":
+          description: Generation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +60,93 @@ components:
           type: string
       required:
         - status
-
+    GenerateEventRequest:
+      type: object
+      properties:
+        era:
+          type: integer
+          description: Current civilization era (1-4)
+        elementsDiscovered:
+          type: array
+          items:
+            type: string
+          description: List of discovered element symbols
+        buildingsBuilt:
+          type: array
+          items:
+            type: string
+          description: Names of constructed buildings
+        technologiesResearched:
+          type: array
+          items:
+            type: string
+          description: Names of researched technologies
+        credits:
+          type: number
+          description: Current credit balance
+        population:
+          type: integer
+          description: Current population
+        factionNames:
+          type: array
+          items:
+            type: string
+          description: Names of discovered alien factions
+        recentEventTitle:
+          type: string
+          description: Title of the most recent event (for variety)
+      required:
+        - era
+        - elementsDiscovered
+        - buildingsBuilt
+        - technologiesResearched
+        - credits
+        - population
+    GeneratedEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+          enum: [random, story, discovery, threat]
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventChoice"
+      required:
+        - id
+        - title
+        - description
+        - type
+        - choices
+    EventChoice:
+      type: object
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        consequence:
+          type: string
+        resourceChanges:
+          type: object
+          additionalProperties:
+            type: number
+        reputationChange:
+          type: integer
+      required:
+        - id
+        - text
+        - consequence
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error

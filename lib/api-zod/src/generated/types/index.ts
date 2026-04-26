@@ -6,4 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./errorResponse";
+export * from "./eventChoice";
+export * from "./eventChoiceResourceChanges";
+export * from "./generatedEvent";
+export * from "./generatedEventType";
+export * from "./generateEventRequest";
 export * from "./healthStatus";

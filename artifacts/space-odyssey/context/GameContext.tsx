@@ -125,12 +125,14 @@ interface GameContextType {
   getBuilding: (buildingId: string) => Building | undefined;
   getTech: (techId: string) => Technology | undefined;
   generateEvent: () => void;
+  generatingEvent: boolean;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<GameState>(initialState);
+  const [generatingEvent, setGeneratingEvent] = useState(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -578,13 +580,62 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, [state]);
 
   const generateEvent = useCallback(() => {
-    setState(prev => {
-      const available = NARRATIVE_EVENTS.filter(e => !prev.completedEvents.includes(e.id) && !prev.activeEvents.find(ae => ae.id === e.id));
-      if (available.length === 0) return prev;
-      const event = available[Math.floor(Math.random() * available.length)];
-      return { ...prev, activeEvents: [...prev.activeEvents, { ...event, timestamp: Date.now() }] };
-    });
-  }, []);
+    if (generatingEvent) return;
+    setGeneratingEvent(true);
+
+    const currentState = state;
+    const elementsDiscovered = currentState.elements
+      .filter(e => e.discovered)
+      .map(e => e.symbol);
+    const buildingsBuilt = currentState.buildings
+      .filter(b => b.level > 0)
+      .map(b => b.name);
+    const technologiesResearched = currentState.technologies
+      .filter(t => t.researched)
+      .map(t => t.name);
+    const factionNames = currentState.factions.map(f => f.name);
+    const recentEventTitle = currentState.completedEvents.length > 0
+      ? currentState.activeEvents[0]?.title
+      : undefined;
+
+    fetch('/api/generate-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        era: currentState.era,
+        elementsDiscovered,
+        buildingsBuilt,
+        technologiesResearched,
+        credits: currentState.credits,
+        population: currentState.population,
+        factionNames,
+        recentEventTitle,
+      }),
+    })
+      .then(async res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<GameEvent>;
+      })
+      .then(event => {
+        setState(prev => ({
+          ...prev,
+          activeEvents: [...prev.activeEvents, { ...event, timestamp: Date.now() }],
+        }));
+        setGeneratingEvent(false);
+      })
+      .catch(err => {
+        console.warn('AI event generation failed, using local fallback:', err);
+        setState(prev => {
+          const available = NARRATIVE_EVENTS.filter(
+            e => !prev.completedEvents.includes(e.id) && !prev.activeEvents.find(ae => ae.id === e.id)
+          );
+          if (available.length === 0) return prev;
+          const event = available[Math.floor(Math.random() * available.length)];
+          return { ...prev, activeEvents: [...prev.activeEvents, { ...event, timestamp: Date.now() }] };
+        });
+        setGeneratingEvent(false);
+      });
+  }, [generatingEvent, state]);
 
   const checkAchievements = (
     achievements: Achievement[],
@@ -650,6 +701,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       getBuilding,
       getTech,
       generateEvent,
+      generatingEvent,
     }}>
       {children}
     </GameContext.Provider>

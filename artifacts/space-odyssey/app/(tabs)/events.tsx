@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform,
+  View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Animated,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -24,10 +24,25 @@ const EVENT_TYPE_ICONS: Record<string, string> = {
 };
 
 export default function EventsScreen() {
-  const { state, resolveEvent, generateEvent } = useGame();
+  const { state, resolveEvent, generateEvent, generatingEvent } = useGame();
   const colors = useColors();
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const paddingBottom = Platform.OS === 'web' ? 34 : 0;
+
+  useEffect(() => {
+    if (generatingEvent) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+    }
+  }, [generatingEvent, pulseAnim]);
 
   const handleChoice = (eventId: string, choiceId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -45,17 +60,35 @@ export default function EventsScreen() {
       >
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.primary }]}>NARRATIVE EVENTS</Text>
-          <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            {state.activeEvents.length} ACTIVE · {state.completedEvents.length} RESOLVED
-          </Text>
+          <View style={styles.headerRow}>
+            <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
+              {state.activeEvents.length} ACTIVE · {state.completedEvents.length} RESOLVED
+            </Text>
+            <View style={[styles.aiBadge, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '11' }]}>
+              <Feather name="cpu" size={9} color={colors.primary} />
+              <Text style={[styles.aiBadgeText, { color: colors.primary }]}>AI NARRATIVE</Text>
+            </View>
+          </View>
         </View>
 
-        {state.activeEvents.length === 0 && (
+        {generatingEvent && (
+          <Animated.View style={[styles.generatingCard, { borderColor: colors.primary, backgroundColor: colors.card, opacity: pulseAnim }]}>
+            <Feather name="zap" size={20} color={colors.primary} />
+            <View style={styles.generatingTextCol}>
+              <Text style={[styles.generatingTitle, { color: colors.primary }]}>SCANNING DEEP SPACE...</Text>
+              <Text style={[styles.generatingDesc, { color: colors.mutedForeground }]}>
+                AI is crafting a unique narrative event for your civilization
+              </Text>
+            </View>
+          </Animated.View>
+        )}
+
+        {state.activeEvents.length === 0 && !generatingEvent && (
           <View style={[styles.emptyState, { borderColor: colors.border }]}>
             <Feather name="radio" size={40} color={colors.mutedForeground} />
             <Text style={[styles.emptyTitle, { color: colors.mutedForeground }]}>NO INCOMING SIGNALS</Text>
             <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
-              Events occur as you explore and mine. Continue your operations to trigger narrative encounters.
+              Events occur as you explore and mine. Scan for signals to trigger AI-generated narrative encounters tailored to your civilization.
             </Text>
             <TouchableOpacity
               style={[styles.generateBtn, { borderColor: colors.primary }]}
@@ -67,6 +100,16 @@ export default function EventsScreen() {
           </View>
         )}
 
+        {state.activeEvents.length > 0 && !generatingEvent && (
+          <TouchableOpacity
+            style={[styles.scanAgainBtn, { borderColor: colors.primary + '44' }]}
+            onPress={() => { generateEvent(); Haptics.selectionAsync(); }}
+          >
+            <Feather name="zap" size={12} color={colors.primary} />
+            <Text style={[styles.scanAgainText, { color: colors.primary }]}>SCAN FOR MORE SIGNALS</Text>
+          </TouchableOpacity>
+        )}
+
         {state.activeEvents.map(event => {
           const typeColor = EVENT_TYPE_COLORS[event.type] ?? colors.primary;
           const typeIcon = EVENT_TYPE_ICONS[event.type] ?? 'radio';
@@ -74,9 +117,17 @@ export default function EventsScreen() {
           return (
             <View key={event.id} style={[styles.eventCard, { borderColor: typeColor, backgroundColor: colors.card }]}>
               <View style={styles.eventMeta}>
-                <View style={[styles.typeTag, { backgroundColor: typeColor + '22', borderColor: typeColor }]}>
-                  <Feather name={typeIcon as any} size={11} color={typeColor} />
-                  <Text style={[styles.typeTagText, { color: typeColor }]}>{event.type.toUpperCase()}</Text>
+                <View style={styles.eventTags}>
+                  <View style={[styles.typeTag, { backgroundColor: typeColor + '22', borderColor: typeColor }]}>
+                    <Feather name={typeIcon as any} size={11} color={typeColor} />
+                    <Text style={[styles.typeTagText, { color: typeColor }]}>{event.type.toUpperCase()}</Text>
+                  </View>
+                  {String(event.id).startsWith('ai_') && (
+                    <View style={[styles.aiTag, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '11' }]}>
+                      <Feather name="cpu" size={9} color={colors.primary} />
+                      <Text style={[styles.aiTagText, { color: colors.primary }]}>AI</Text>
+                    </View>
+                  )}
                 </View>
                 <Text style={[styles.timestamp, { color: colors.mutedForeground }]}>
                   {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -147,9 +198,42 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { flex: 1 },
   content: { padding: 16, gap: 16 },
-  header: { gap: 4 },
+  header: { gap: 6 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 14, fontFamily: 'Inter_700Bold', letterSpacing: 2 },
   subtitle: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  aiBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderRadius: 4,
+  },
+  aiBadgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
+  generatingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    padding: 18,
+  },
+  generatingTextCol: { flex: 1, gap: 4 },
+  generatingTitle: { fontSize: 13, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  generatingDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
+  scanAgainBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    padding: 10,
+    borderWidth: 1,
+    borderRadius: 6,
+  },
+  scanAgainText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 1 },
   emptyState: {
     borderWidth: 1,
     borderStyle: 'dashed',
@@ -178,6 +262,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   eventMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  eventTags: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  aiTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderRadius: 4,
+  },
+  aiTagText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
   typeTag: {
     flexDirection: 'row',
     alignItems: 'center',

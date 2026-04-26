@@ -5,18 +5,26 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  ErrorResponse,
+  GenerateEventRequest,
+  GeneratedEvent,
+  HealthStatus,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +107,90 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Uses AI to generate a context-aware narrative event based on current game state
+ * @summary Generate a narrative event
+ */
+export const getGenerateGameEventUrl = () => {
+  return `/api/game/generate-event`;
+};
+
+export const generateGameEvent = async (
+  generateEventRequest: GenerateEventRequest,
+  options?: RequestInit,
+): Promise<GeneratedEvent> => {
+  return customFetch<GeneratedEvent>(getGenerateGameEventUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(generateEventRequest),
+  });
+};
+
+export const getGenerateGameEventMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateGameEvent>>,
+    TError,
+    { data: BodyType<GenerateEventRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateGameEvent>>,
+  TError,
+  { data: BodyType<GenerateEventRequest> },
+  TContext
+> => {
+  const mutationKey = ["generateGameEvent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateGameEvent>>,
+    { data: BodyType<GenerateEventRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return generateGameEvent(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateGameEventMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateGameEvent>>
+>;
+export type GenerateGameEventMutationBody = BodyType<GenerateEventRequest>;
+export type GenerateGameEventMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Generate a narrative event
+ */
+export const useGenerateGameEvent = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateGameEvent>>,
+    TError,
+    { data: BodyType<GenerateEventRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateGameEvent>>,
+  TError,
+  { data: BodyType<GenerateEventRequest> },
+  TContext
+> => {
+  return useMutation(getGenerateGameEventMutationOptions(options));
+};

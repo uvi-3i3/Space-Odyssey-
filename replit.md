@@ -21,7 +21,8 @@ Mobile-first idle RPG where you guide a civilization through planetary explorati
 - **Mining System**: 3 mining types (Safe, Aggressive, Deep Core) across 8 planet zones
 - **Building System**: 8 building types with upgrade system
 - **Tech Tree**: 10+ technologies across 3 eras
-- **Narrative Events**: 5 branching story events with consequences
+- **AI Narrative Events**: GPT-powered dynamic events unique to each civilization's state via Expo Router API route (`app/api/generate-event+api.ts`)
+- **Static Fallback Events**: 5 static branching events used when AI is unavailable
 - **Combat System**: Turn-based fleet battles with 3 strategies
 - **Espionage System**: 4 mission types with varying success rates
 - **3 Factions**: Zorathi, Krenn, Vael with reputation system
@@ -30,6 +31,13 @@ Mobile-first idle RPG where you guide a civilization through planetary explorati
 - **Prestige System**: Reset for permanent multipliers
 - **Offline Progress**: Idle resource generation while away
 - **Persistence**: AsyncStorage-based save system
+
+### AI Integration
+- Uses Replit AI Integrations (OpenAI) via an Expo Router API route
+- `app/api/generate-event+api.ts` — server-side handler using `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY`
+- Enabled by `"output": "server"` in `app.json` web config
+- Falls back to static events on API failure
+- AI events tagged with "AI" badge in the Events tab UI
 
 ### Key Files
 - `artifacts/space-odyssey/context/GameContext.tsx` — Core game state + all game logic

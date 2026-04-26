@@ -8,3 +8,54 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface GenerateEventRequest {
+  /** Current civilization era (1-4) */
+  era: number;
+  /** List of discovered element symbols */
+  elementsDiscovered: string[];
+  /** Names of constructed buildings */
+  buildingsBuilt: string[];
+  /** Names of researched technologies */
+  technologiesResearched: string[];
+  /** Current credit balance */
+  credits: number;
+  /** Current population */
+  population: number;
+  /** Names of discovered alien factions */
+  factionNames?: string[];
+  /** Title of the most recent event (for variety) */
+  recentEventTitle?: string;
+}
+
+export type GeneratedEventType =
+  (typeof GeneratedEventType)[keyof typeof GeneratedEventType];
+
+export const GeneratedEventType = {
+  random: "random",
+  story: "story",
+  discovery: "discovery",
+  threat: "threat",
+} as const;
+
+export type EventChoiceResourceChanges = { [key: string]: number };
+
+export interface EventChoice {
+  id: string;
+  text: string;
+  consequence: string;
+  resourceChanges?: EventChoiceResourceChanges;
+  reputationChange?: number;
+}
+
+export interface GeneratedEvent {
+  id: string;
+  title: string;
+  description: string;
+  type: GeneratedEventType;
+  choices: EventChoice[];
+}
+
+export interface ErrorResponse {
+  error: string;
+}

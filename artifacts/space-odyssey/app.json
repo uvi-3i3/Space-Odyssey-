@@ -21,7 +21,8 @@
     },
     "web": {
       "favicon": "./assets/images/icon.png",
-      "backgroundColor": "#0A1628"
+      "backgroundColor": "#0A1628",
+      "output": "server"
     },
     "plugins": [
       [
