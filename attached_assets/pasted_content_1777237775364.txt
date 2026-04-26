@@ -1,0 +1,281 @@
+🌌 SPACE ODYSSEY — GAME DESIGN DOCUMENT
+1. 🎯 Game Overview
+Genre:
+Idle RPG + Strategy + Text-driven Narrative + Asynchronous Multiplayer
+Platform:
+Mobile-first (portrait), web compatible
+Core Fantasy:
+You start as a lone space explorer and evolve into the ruler of a multi-planet civilization, discovering elements, shaping lifeforms, and outsmarting other players through strategy, espionage, and expansion.
+2. 🔁 Core Gameplay Loop
+This is the heart of the game — everything feeds into this:
+Primary Loop:
+Explore / Scan
+Mine / Collect Elements
+Research / Combine Elements
+Build / Upgrade
+Train Units / Evolve Species
+Spy / Invade
+Earn Rewards → Repeat
+Micro Loop (Moment-to-moment):
+Tap planet → scan result
+Choose mining method
+Trigger event → make decision
+Get reward / consequence
+👉 The goal: constant small decisions + visible progress
+3. 🚀 Game Phases (Progression Structure)
+🌠 Phase 1: Survival (Spacecraft Mode)
+Duration: First 30–60 minutes
+You have:
+One ship
+Small crew
+Limited fuel
+Features unlocked:
+Basic mining
+Element discovery
+Simple decisions
+Goal:
+Survive and discover your first habitable planet
+🪐 Phase 2: Settlement (Planet Mode)
+Build your first colony
+Unlock:
+Resource production
+Population growth
+Basic defenses
+New systems:
+Element storage
+Tech tree
+Civilization traits
+🧬 Phase 3: Evolution
+Modify your species
+Unlock:
+Mutation lab
+Advanced tech
+Specialized units
+⚔️ Phase 4: Expansion & Conflict
+Build fleets
+Spy on others
+Launch invasions
+🌌 Phase 5: Galactic Influence (Endgame)
+Control multiple planets
+Rare elements
+Alliances / politics
+4. ⚛️ Element System (Core Feature)
+Element Types
+1. Known Elements
+Iron, Oxygen, Hydrogen
+Stable, predictable
+2. Unknown Elements
+Hidden until discovered
+Randomized properties
+3. Synthetic Elements
+Created by combining others
+Element Properties
+Each element has:
+Energy output
+Stability
+Rarity
+Special effect
+Example:
+“Xyron-7”
+High energy
+Low stability
+Used for advanced weapons
+Element Uses
+Fuel
+Construction
+Evolution
+Weapons
+Research
+Collection System
+“Element Codex”
+Tracks:
+Found elements
+Missing elements
+Combinations tried
+👉 This becomes a completion addiction loop
+5. ⛏️ Mining System
+Mining Types
+Safe Mining
+Low yield
+No risk
+Aggressive Mining
+High yield
+Risk:
+Explosion
+Crew loss
+Rare discovery
+Deep Core Mining
+Unlock later
+Chance to find:
+Unknown elements
+Anomalies
+Scanning System
+Before mining:
+Shows probability of resources
+Hidden signals
+6. 🧬 Civilization & Evolution System
+Civilization Traits (Player Choice)
+Militaristic
+Scientific
+Stealth
+Industrial
+Species Evolution
+Your population evolves based on:
+Elements used
+Decisions made
+Examples:
+Radiation → glowing beings
+AI fusion → cyber species
+Stealth → invisible scouts
+Gameplay Impact
+Changes:
+Unit stats
+Abilities
+Visual identity
+7. 🏗️ Building System
+Categories
+Resource buildings
+Defense systems
+Research labs
+Population hubs
+Upgrade System
+Visible changes (important for satisfaction)
+Unlock new mechanics
+8. ⚔️ Combat System (Asynchronous)
+Types
+Direct Invasion
+Send fleet
+Resolve via simulation
+Spy Operations
+Reveal enemy base
+Steal elements
+Sabotage
+Combat Factors
+Unit composition
+Element buffs
+Strategy type
+Rewards
+Elements
+Resources
+Rare discoveries
+9. 🕵️ Espionage System
+Actions
+Scan enemy base
+Plant spy
+Disrupt production
+Fake signals
+Risk
+Spy captured
+False info
+👉 This adds mind games + depth
+10. 📖 Narrative System
+Delivery Style
+Text events + choices
+Example:
+“A signal from a dead civilization is detected…”
+Investigate
+Ignore
+Extract resources
+Story Elements
+Ancient alien races
+Lost technologies
+Moral dilemmas
+Impact
+Choices affect:
+Elements
+Evolution
+Reputation
+11. 🕳️ Anomaly System
+Random rare events:
+Black holes
+Time loops
+Element duplication zones
+Risk vs Reward
+High reward
+High danger
+12. 👥 Multiplayer System (Future Phase)
+Features
+Player bases
+Invasions
+Alliances
+Trading system
+Type
+Asynchronous (no real-time requirement)
+13. 📊 Progression Systems
+Multiple layers:
+Player level
+Tech tree
+Civilization level
+Element collection
+Fleet strength
+👉 Always something progressing
+14. 🎨 UI/UX Design
+Style
+Clean
+Minimal
+Not “AI-looking”
+Screen Layout
+Main Screen:
+Planet visual (center)
+Resource bar (top)
+Actions (bottom)
+Visual Elements
+Subtle animations:
+Ships moving
+Mining beams
+Population activity
+Text Integration
+Events appear as overlays
+Choices are quick taps
+15. 🎮 Session Design
+Short Sessions (1–3 min)
+Collect resources
+Make decisions
+Medium Sessions (5–10 min)
+Build, upgrade, plan
+Long Sessions (optional)
+Strategy + invasion
+16. 💰 Monetization (Optional)
+Keep fair:
+Cosmetics
+Speed-ups (limited)
+Premium elements (not pay-to-win)
+17. 🔥 Retention Hooks
+Element discovery
+Daily anomalies
+Limited-time events
+Collection goals
+Progress bars everywhere
+18. ⚠️ Risks & Solutions
+Risk: Too complex
+👉 Solution: Gradual unlock
+Risk: Repetitive gameplay
+👉 Solution: Events + randomness
+Risk: No emotional attachment
+👉 Solution: Strong narrative + evolution
+19. 🧩 MVP Scope (Important)
+Start small:
+Include:
+Spacecraft mode
+1 planet
+Basic mining
+Element system
+Simple upgrades
+Text events
+Exclude (for now):
+Multiplayer
+Deep espionage
+Advanced evolution
+20. 🚀 Future Expansion
+Real-time wars
+Player alliances
+Galaxy map
+Story campaigns
+PvP ranking
+🧠 Final Thought
+This idea works because it combines:
+Collection (elements)
+Growth (civilization)
+Strategy (combat)
+Mystery (unknown elements + story)
+If executed cleanly, it can be seriously addictiv

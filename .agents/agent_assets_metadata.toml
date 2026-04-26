@@ -1,0 +1,20 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "G4fDw-EycJqHWgbESb3sU"
+uri = "file://artifacts/space-odyssey/assets/images/icon.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "fRiMecrZpjqgfKKOh0yfm"
+uri = "file://artifacts/space-odyssey/assets/images/splash.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "icRPrgMClPeFX262KfQa2"
+uri = "file://artifacts/space-odyssey/assets/images/planet_bg.png"
+type = "image"
+title = "generated_image"

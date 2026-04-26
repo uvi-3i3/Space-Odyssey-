@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/"
+title = "Space Odyssey: Galactic Evolution"
+version = "1.0.0"
+id = "artifacts/space-odyssey"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 22598
+
+[services.development]
+run = "pnpm --filter @workspace/space-odyssey run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/space-odyssey", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/space-odyssey", "run", "serve" ]
+
+[services.env]
+PORT = "22598"
+BASE_PATH = "/"
