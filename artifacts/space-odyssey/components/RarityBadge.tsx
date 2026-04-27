@@ -12,7 +12,7 @@ export function RarityBadge({ rarity, size = 'sm' }: RarityBadgeProps) {
   const color = getRarityColor(rarity, colors);
 
   return (
-    <View style={[styles.badge, { borderColor: color, backgroundColor: color + '22' }, size === 'md' && styles.badgeMd]}>
+    <View style={[styles.badge, { borderColor: color, backgroundColor: color + '18' }, size === 'md' && styles.badgeMd]}>
       <Text style={[styles.text, { color }, size === 'md' && styles.textMd]}>
         {rarity.toUpperCase()}
       </Text>
@@ -42,11 +42,11 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   text: {
-    fontSize: 9,
-    fontFamily: 'Inter_700Bold',
+    fontSize: 8,
+    fontFamily: 'SpaceMono_700Bold',
     letterSpacing: 0.5,
   },
   textMd: {
-    fontSize: 11,
+    fontSize: 10,
   },
 });

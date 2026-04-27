@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
-import { useColors } from '@/hooks/useColors';
 
 const { width, height } = Dimensions.get('window');
 
@@ -9,9 +8,7 @@ interface BlueprintGridProps {
   opacity?: number;
 }
 
-export function BlueprintGrid({ size = 30, opacity = 0.12 }: BlueprintGridProps) {
-  const colors = useColors();
-
+export function BlueprintGrid({ size = 28, opacity = 0.18 }: BlueprintGridProps) {
   const lines = useMemo(() => {
     const horizontal: number[] = [];
     const vertical: number[] = [];
@@ -25,13 +22,13 @@ export function BlueprintGrid({ size = 30, opacity = 0.12 }: BlueprintGridProps)
       {lines.horizontal.map(y => (
         <View
           key={`h-${y}`}
-          style={[styles.line, styles.horizontal, { top: y, borderColor: colors.primary, opacity }]}
+          style={[styles.line, styles.horizontal, { top: y, opacity }]}
         />
       ))}
       {lines.vertical.map(x => (
         <View
           key={`v-${x}`}
-          style={[styles.line, styles.vertical, { left: x, borderColor: colors.primary, opacity }]}
+          style={[styles.line, styles.vertical, { left: x, opacity }]}
         />
       ))}
     </View>
@@ -42,6 +39,7 @@ const styles = StyleSheet.create({
   line: {
     position: 'absolute',
     borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#4DA8DA',
   },
   horizontal: {
     left: 0,

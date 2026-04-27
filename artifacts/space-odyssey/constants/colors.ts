@@ -1,42 +1,42 @@
 const colors = {
   light: {
-    text: "#E8F4FF",
-    tint: "#00D4FF",
+    text: "#1A2B3C",
+    tint: "#4DA8DA",
 
-    background: "#0A1628",
-    foreground: "#E8F4FF",
+    background: "#F5F8FA",
+    foreground: "#1A2B3C",
 
-    card: "#0F1E38",
-    cardForeground: "#E8F4FF",
+    card: "#FFFFFF",
+    cardForeground: "#1A2B3C",
 
-    primary: "#00D4FF",
-    primaryForeground: "#0A1628",
+    primary: "#4DA8DA",
+    primaryForeground: "#FFFFFF",
 
-    secondary: "#1A2E4A",
-    secondaryForeground: "#A8C8E8",
+    secondary: "#3ECFB2",
+    secondaryForeground: "#FFFFFF",
 
-    muted: "#1A2E4A",
-    mutedForeground: "#5A7A9A",
+    muted: "#E8F4FA",
+    mutedForeground: "#6B8BA4",
 
-    accent: "#0066CC",
-    accentForeground: "#E8F4FF",
+    accent: "#3ECFB2",
+    accentForeground: "#FFFFFF",
 
-    destructive: "#FF4444",
-    destructiveForeground: "#ffffff",
+    destructive: "#E74C3C",
+    destructiveForeground: "#FFFFFF",
 
-    border: "#1E3A5F",
-    input: "#1A2E4A",
+    border: "#D6E8F0",
+    input: "#E8F4FA",
 
-    success: "#00FF88",
+    success: "#3ECFB2",
     warning: "#FFB800",
-    legendary: "#FF6B00",
+    legendary: "#FFB800",
     epic: "#9B59B6",
-    rare: "#00D4FF",
-    uncommon: "#00FF88",
-    common: "#A8C8E8",
+    rare: "#4DA8DA",
+    uncommon: "#3ECFB2",
+    common: "#A0A0A0",
   },
 
-  radius: 6,
+  radius: 8,
 };
 
 export default colors;

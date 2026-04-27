@@ -11,7 +11,7 @@ interface ProgressBarProps {
 
 export function ProgressBar({ progress, color, height = 4, animated = true }: ProgressBarProps) {
   const colors = useColors();
-  const barColor = color ?? colors.primary;
+  const barColor = color ?? colors.secondary;
   const widthAnim = useRef(new Animated.Value(0)).current;
 
   const clampedProgress = Math.max(0, Math.min(1, progress));
@@ -29,13 +29,13 @@ export function ProgressBar({ progress, color, height = 4, animated = true }: Pr
   }, [clampedProgress, animated]);
 
   return (
-    <View style={[styles.track, { height, backgroundColor: colors.border, borderRadius: height / 2 }]}>
+    <View style={[styles.track, { height, backgroundColor: colors.border, borderRadius: 0 }]}>
       <Animated.View
         style={[
           styles.fill,
           {
             height,
-            borderRadius: height / 2,
+            borderRadius: 0,
             backgroundColor: barColor,
             width: widthAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
           },
