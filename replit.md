@@ -60,6 +60,15 @@ Reusable primitives in `artifacts/space-odyssey/components/`:
 - `Shimmer.tsx` — diagonal sheen for rare/epic/legendary elements
 - `GlowPulse.tsx` — slow breathing glow halo for hero CTAs (engage, prestige, active research)
 - `AnimatedTabIcon.tsx` — tab bar icon with spring scale + halo glow on focus
+- `CountUpText.tsx` — animated numeric ticker with easing
+- `EventOutcomeModal.tsx` — cinematic event aftermath reveal: type-tinted flash, suspense lock-in, typewriter consequence text, animated resource ledger tickers, optional "CRITICAL" outcome with shimmer + heavy haptic
+
+### Event System Drama
+Events now feel like real consequential decisions rather than silent transactions:
+- Choosing an option locks-in (✓ checkmark + glow), siblings dim, and a 750ms suspense overlay ("PROCESSING DECISION · CALCULATING TIMELINE BRANCH...") appears with a spinning ring.
+- After the suspense, an outcome modal opens with a colored radial flash, type-aware headline ("BREAKTHROUGH" / "THREAT NEUTRALIZED" / "A COSTLY GAMBLE"), the event's pre-existing `consequence` text revealed via typewriter, and an animated resource ledger that counts up each gain/loss with directional icons.
+- 16-24% chance per event of a CRITICAL outcome (varies by event type: discovery 24%, random 20%, story 18%, threat 16%) — multiplies positive resource gains by 1.6×, halves losses (except threats), and on discovery/story criticals adds a bonus rare/epic element. Critical outcomes are gold-accented with a shimmer badge and heavy haptic.
+- Resolved events are stored in `state.eventLog` (last 25, persisted) and shown in an "AFTERMATH LOG" section as tappable rows that re-open the outcome modal in read-only mode.
 
 Integration coverage:
 - Planet (`app/(tabs)/index.tsx`) — starfield, rotating planet, scan pulse, zone node press, mining buttons, panel/banner fade-in, codex shimmer

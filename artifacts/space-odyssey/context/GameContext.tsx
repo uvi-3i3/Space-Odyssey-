@@ -26,6 +26,7 @@ export interface GameState {
   achievements: Achievement[];
   activeEvents: GameEvent[];
   completedEvents: string[];
+  eventLog: EventResolution[];
   planetZones: typeof PLANET_ZONES;
   lastSave: number;
   totalPlayTime: number;
@@ -48,6 +49,21 @@ export interface CombatEntry {
   outcome: 'win' | 'loss' | 'draw';
   timestamp: number;
   details: string;
+}
+
+export interface EventResolution {
+  id: string;
+  eventId: string;
+  eventTitle: string;
+  eventType: 'random' | 'story' | 'discovery' | 'threat';
+  choiceId: string;
+  choiceText: string;
+  consequence: string;
+  resourceChanges: Record<string, number>;
+  reputationChange: number;
+  critical: boolean;
+  netScore: number;
+  timestamp: number;
 }
 
 export interface EspionageEntry {
@@ -93,6 +109,7 @@ const initialState: GameState = {
   achievements: INITIAL_ACHIEVEMENTS,
   activeEvents: [],
   completedEvents: [],
+  eventLog: [],
   planetZones: PLANET_ZONES,
   lastSave: Date.now(),
   totalPlayTime: 0,
@@ -115,7 +132,7 @@ interface GameContextType {
   upgradeBuilding: (buildingId: string) => { success: boolean; message: string };
   demolishBuilding: (buildingId: string) => void;
   startResearch: (techId: string) => { success: boolean; message: string };
-  resolveEvent: (eventId: string, choiceId: string) => void;
+  resolveEvent: (eventId: string, choiceId: string) => EventResolution | null;
   engageCombat: (factionId: string, strategy: 'attack' | 'defend' | 'retreat') => CombatEntry;
   runEspionage: (factionId: string, mission: 'scan' | 'spy' | 'disrupt' | 'fake') => EspionageEntry;
   claimDailyReward: () => { success: boolean; rewards: Record<string, number> };
@@ -151,6 +168,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as GameState;
+        if (!parsed.eventLog) parsed.eventLog = [];
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
         const loaded = applyOfflineProgress(parsed, cappedTime);
@@ -407,26 +425,73 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return { success: true, message: `Researching ${tech.name}...` };
   }, [state]);
 
-  const resolveEvent = useCallback((eventId: string, choiceId: string) => {
-    setState(prev => {
-      const event = prev.activeEvents.find(e => e.id === eventId);
-      if (!event) return prev;
-      const choice = event.choices.find(c => c.id === choiceId);
-      if (!choice) return prev;
+  const resolveEvent = useCallback((eventId: string, choiceId: string): EventResolution | null => {
+    const event = state.activeEvents.find(e => e.id === eventId);
+    if (!event) return null;
+    const choice = event.choices.find(c => c.id === choiceId);
+    if (!choice) return null;
 
+    // Compute critical outcome: chance varies by event type.
+    const critChanceByType: Record<string, number> = {
+      discovery: 0.24, story: 0.18, random: 0.20, threat: 0.16,
+    };
+    const critical = Math.random() < (critChanceByType[event.type] ?? 0.2);
+
+    // Build final resource changes (with critical modifier).
+    const finalResourceChanges: Record<string, number> = { ...(choice.resourceChanges || {}) };
+    if (critical) {
+      Object.keys(finalResourceChanges).forEach(k => {
+        const v = finalResourceChanges[k];
+        if (v > 0) finalResourceChanges[k] = Math.round(v * 1.6);
+        else if (v < 0 && event.type !== 'threat') finalResourceChanges[k] = Math.round(v * 0.4);
+      });
+      // Discovery / story criticals: bonus rare element
+      if ((event.type === 'discovery' || event.type === 'story') && Object.keys(finalResourceChanges).length > 0) {
+        const rares = state.elements.filter(e => e.rarity === 'rare' || e.rarity === 'epic');
+        if (rares.length > 0) {
+          const bonus = rares[Math.floor(Math.random() * rares.length)];
+          finalResourceChanges[bonus.id] = (finalResourceChanges[bonus.id] || 0) + (event.type === 'discovery' ? 25 : 15);
+        }
+      }
+    }
+
+    const finalReputationChange = critical && choice.reputationChange
+      ? Math.round(choice.reputationChange * (choice.reputationChange > 0 ? 1.5 : 0.5))
+      : (choice.reputationChange ?? 0);
+
+    // Net score for headline tone (positive = favorable).
+    const resScore = Object.values(finalResourceChanges).reduce((acc, v) => acc + (v > 0 ? 1 : v < 0 ? -1 : 0), 0);
+    const netScore = resScore * 5 + finalReputationChange;
+
+    const resolution: EventResolution = {
+      id: `${eventId}_${Date.now()}`,
+      eventId,
+      eventTitle: event.title,
+      eventType: event.type,
+      choiceId,
+      choiceText: choice.text,
+      consequence: choice.consequence,
+      resourceChanges: finalResourceChanges,
+      reputationChange: finalReputationChange,
+      critical,
+      netScore,
+      timestamp: Date.now(),
+    };
+
+    setState(prev => {
       let elements = [...prev.elements];
       let credits = prev.credits;
-      if (choice.resourceChanges) {
-        elements = elements.map(e => {
-          const change = choice.resourceChanges![e.id];
-          if (!change) return e;
-          return { ...e, quantity: Math.max(0, e.quantity + change) };
-        });
-        if (choice.resourceChanges['credits']) credits += choice.resourceChanges['credits'];
-      }
+      Object.keys(finalResourceChanges).forEach(k => {
+        const change = finalResourceChanges[k];
+        if (k === 'credits') {
+          credits += change;
+          return;
+        }
+        elements = elements.map(e => e.id === k ? { ...e, quantity: Math.max(0, e.quantity + change) } : e);
+      });
 
-      const factions = choice.reputationChange ? prev.factions.map(f => ({
-        ...f, reputation: Math.max(-100, Math.min(100, f.reputation + (choice.reputationChange ?? 0))),
+      const factions = finalReputationChange ? prev.factions.map(f => ({
+        ...f, reputation: Math.max(-100, Math.min(100, f.reputation + finalReputationChange)),
       })) : prev.factions;
 
       return {
@@ -436,9 +501,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         factions,
         activeEvents: prev.activeEvents.filter(e => e.id !== eventId),
         completedEvents: [...prev.completedEvents, eventId],
+        eventLog: [resolution, ...prev.eventLog].slice(0, 25),
       };
     });
-  }, []);
+
+    return resolution;
+  }, [state]);
 
   const engageCombat = useCallback((factionId: string, strategy: 'attack' | 'defend' | 'retreat') => {
     const faction = state.factions.find(f => f.id === factionId);

@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useGame, CombatEntry } from '@/context/GameContext';
+import { useGame, CombatEntry, EventResolution } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
 import { Starfield } from '@/components/Starfield';
@@ -15,6 +15,7 @@ import { PressableScale } from '@/components/PressableScale';
 import { FadeSlideIn } from '@/components/FadeSlideIn';
 import { Typewriter } from '@/components/Typewriter';
 import { GlowPulse } from '@/components/GlowPulse';
+import { EventOutcomeModal } from '@/components/EventOutcomeModal';
 
 type IntelSection = 'events' | 'combat' | 'factions';
 type CombatStrategy = 'attack' | 'defend' | 'retreat';
@@ -65,7 +66,11 @@ export default function IntelScreen() {
   const [showAwards, setShowAwards] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [claimMsg, setClaimMsg] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<EventResolution | null>(null);
+  const [outcomeReadOnly, setOutcomeReadOnly] = useState(false);
+  const [resolving, setResolving] = useState<{ eventId: string; choiceId: string; color: string } | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const suspenseAnim = useRef(new Animated.Value(0)).current;
   const paddingBottom = Platform.OS === 'web' ? 34 : 0;
 
   useEffect(() => {
@@ -81,6 +86,31 @@ export default function IntelScreen() {
       pulseAnim.setValue(1);
     }
   }, [generatingEvent]);
+
+  useEffect(() => {
+    if (resolving) {
+      suspenseAnim.setValue(0);
+      Animated.timing(suspenseAnim, {
+        toValue: 1, duration: 280, useNativeDriver: true,
+      }).start();
+    } else {
+      suspenseAnim.setValue(0);
+    }
+  }, [resolving]);
+
+  const handleChoosePath = (eventId: string, choiceId: string, color: string) => {
+    if (resolving) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    setResolving({ eventId, choiceId, color });
+    setTimeout(() => {
+      const result = resolveEvent(eventId, choiceId);
+      setResolving(null);
+      if (result) {
+        setOutcomeReadOnly(false);
+        setOutcome(result);
+      }
+    }, 750);
+  };
 
   const handleCombat = () => {
     if (!selectedFaction) return;
@@ -284,17 +314,32 @@ export default function IntelScreen() {
 
                     <Text style={[styles.choiceLabel, { color: typeColor }]}>// SELECT RESPONSE:</Text>
 
-                    {event.choices.map((choice, idx) => (
+                    {event.choices.map((choice, idx) => {
+                      const isLockedIn = resolving?.eventId === event.id && resolving.choiceId === choice.id;
+                      const isFading = !!resolving && resolving.eventId === event.id && resolving.choiceId !== choice.id;
+                      return (
                       <FadeSlideIn key={choice.id} delay={120 + idx * 40} duration={300} offset={6}>
                       <PressableScale
-                        style={[styles.choiceBtn, { borderColor: typeColor + '55', backgroundColor: typeColor + '0C' }]}
-                        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); resolveEvent(event.id, choice.id); }}
-                        glow
+                        style={[
+                          styles.choiceBtn,
+                          {
+                            borderColor: isLockedIn ? typeColor : typeColor + '55',
+                            backgroundColor: isLockedIn ? typeColor + '22' : typeColor + '0C',
+                            opacity: isFading ? 0.35 : 1,
+                          },
+                        ]}
+                        onPress={() => handleChoosePath(event.id, choice.id, typeColor)}
+                        glow={isLockedIn || !resolving}
                         glowColor={typeColor}
                         scaleTo={0.98}
+                        disabled={!!resolving}
                       >
                         <View style={[styles.choiceNum, { borderColor: typeColor, backgroundColor: typeColor + '22' }]}>
-                          <Text style={[styles.choiceNumText, { color: typeColor, fontFamily: 'SpaceMono_700Bold' }]}>{idx + 1}</Text>
+                          {isLockedIn ? (
+                            <Feather name="check" size={11} color={typeColor} />
+                          ) : (
+                            <Text style={[styles.choiceNumText, { color: typeColor, fontFamily: 'SpaceMono_700Bold' }]}>{idx + 1}</Text>
+                          )}
                         </View>
                         <View style={{ flex: 1, gap: 3 }}>
                           <Text style={[styles.choiceText, { color: colors.foreground }]}>{choice.text}</Text>
@@ -311,27 +356,93 @@ export default function IntelScreen() {
                             )}
                           </View>
                         </View>
-                        <Feather name="chevron-right" size={14} color={typeColor} />
+                        <Feather name={isLockedIn ? 'loader' : 'chevron-right'} size={14} color={typeColor} />
                       </PressableScale>
                       </FadeSlideIn>
-                    ))}
+                      );
+                    })}
                   </View>
                 </View>
                 </FadeSlideIn>
               );
             })}
 
-            {state.completedEvents.length > 0 && (
+            {state.eventLog.length > 0 && (
               <View style={styles.completedSection}>
                 <Text style={[styles.completedLabel, { color: colors.mutedForeground }]}>
-                  RESOLVED SIGNALS ({state.completedEvents.length})
+                  AFTERMATH LOG ({state.eventLog.length})
                 </Text>
-                {state.completedEvents.slice(0, 4).map(id => (
-                  <View key={id} style={[styles.completedItem, { borderColor: colors.border }]}>
-                    <Feather name="check-circle" size={12} color={colors.secondary} />
-                    <Text style={[styles.completedText, { color: colors.mutedForeground }]}>SIGNAL RESOLVED</Text>
-                  </View>
-                ))}
+                {state.eventLog.slice(0, 6).map((entry, i) => {
+                  const c = EVENT_TYPE_COLORS[entry.eventType] ?? colors.primary;
+                  const accent = entry.critical ? '#FFD700' : c;
+                  const tone = entry.netScore > 5
+                    ? colors.secondary
+                    : entry.netScore < -5
+                    ? colors.destructive
+                    : colors.mutedForeground;
+                  return (
+                    <FadeSlideIn key={entry.id} delay={i * 40} duration={280} offset={6}>
+                      <PressableScale
+                        style={[
+                          styles.logRow,
+                          {
+                            borderColor: accent + '55',
+                            backgroundColor: colors.card,
+                          },
+                        ]}
+                        onPress={() => {
+                          Haptics.selectionAsync().catch(() => {});
+                          setOutcomeReadOnly(true);
+                          setOutcome(entry);
+                        }}
+                        scaleTo={0.98}
+                      >
+                        <View style={[styles.logStripe, { backgroundColor: accent }]} />
+                        <View style={{ flex: 1, gap: 3 }}>
+                          <View style={styles.logHeader}>
+                            <Text style={[styles.logType, { color: c }]}>
+                              {entry.eventType.toUpperCase()}
+                            </Text>
+                            {entry.critical && (
+                              <Text style={[styles.logCrit, { color: '#FFD700' }]}>CRITICAL</Text>
+                            )}
+                            <Text style={[styles.logTime, { color: colors.mutedForeground, fontFamily: 'SpaceMono_400Regular' }]}>
+                              {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </Text>
+                          </View>
+                          <Text style={[styles.logTitle, { color: colors.foreground }]} numberOfLines={1}>
+                            {entry.eventTitle}
+                          </Text>
+                          <Text style={[styles.logChoice, { color: colors.mutedForeground }]} numberOfLines={1}>
+                            &gt; {entry.choiceText}
+                          </Text>
+                          <View style={styles.logDeltas}>
+                            {Object.entries(entry.resourceChanges).slice(0, 4).map(([k, v]) => (
+                              <Text
+                                key={k}
+                                style={[
+                                  styles.logDelta,
+                                  {
+                                    color: v > 0 ? colors.secondary : colors.destructive,
+                                    fontFamily: 'SpaceMono_700Bold',
+                                  },
+                                ]}
+                              >
+                                {v > 0 ? '+' : ''}{v} {k === 'credits' ? 'CR' : k.toUpperCase()}
+                              </Text>
+                            ))}
+                            {entry.reputationChange ? (
+                              <Text style={[styles.logDelta, { color: entry.reputationChange > 0 ? colors.secondary : colors.destructive, fontFamily: 'SpaceMono_700Bold' }]}>
+                                REP {entry.reputationChange > 0 ? '+' : ''}{entry.reputationChange}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+                        <Feather name="chevron-right" size={14} color={tone} />
+                      </PressableScale>
+                    </FadeSlideIn>
+                  );
+                })}
               </View>
             )}
           </>
@@ -809,6 +920,42 @@ export default function IntelScreen() {
           </View>
         </View>
       </Modal>
+
+      {resolving && (
+        <Animated.View
+          style={[
+            styles.suspenseOverlay,
+            { backgroundColor: 'rgba(5, 12, 22, 0.78)', opacity: suspenseAnim },
+          ]}
+          pointerEvents="auto"
+        >
+          <View style={[styles.suspenseCard, { borderColor: resolving.color, backgroundColor: colors.card }]}>
+            <Animated.View
+              style={[
+                styles.suspenseRing,
+                {
+                  borderColor: resolving.color,
+                  transform: [{
+                    rotate: suspenseAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }),
+                  }],
+                },
+              ]}
+            />
+            <Feather name="cpu" size={26} color={resolving.color} />
+            <Text style={[styles.suspenseText, { color: resolving.color }]}>PROCESSING DECISION</Text>
+            <Text style={[styles.suspenseSub, { color: colors.mutedForeground }]}>
+              CALCULATING TIMELINE BRANCH...
+            </Text>
+          </View>
+        </Animated.View>
+      )}
+
+      <EventOutcomeModal
+        visible={!!outcome}
+        resolution={outcome}
+        readOnly={outcomeReadOnly}
+        onClose={() => { setOutcome(null); setOutcomeReadOnly(false); }}
+      />
     </View>
   );
 }
@@ -873,6 +1020,34 @@ const styles = StyleSheet.create({
   completedLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.5 },
   completedItem: { flexDirection: 'row', alignItems: 'center', gap: 7, padding: 8, borderWidth: 1, borderRadius: 5 },
   completedText: { fontSize: 11, fontFamily: 'Inter_400Regular' },
+  logRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    padding: 10, paddingLeft: 0, borderWidth: 1, borderRadius: 6, overflow: 'hidden',
+  },
+  logStripe: { width: 3, alignSelf: 'stretch', marginRight: 8 },
+  logHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  logType: { fontSize: 9, fontFamily: 'SpaceMono_700Bold', letterSpacing: 1 },
+  logCrit: { fontSize: 9, fontFamily: 'SpaceMono_700Bold', letterSpacing: 1 },
+  logTime: { fontSize: 9, marginLeft: 'auto' },
+  logTitle: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  logChoice: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
+  logDeltas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  logDelta: { fontSize: 10 },
+  suspenseOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center', justifyContent: 'center', zIndex: 99,
+  },
+  suspenseCard: {
+    paddingHorizontal: 28, paddingVertical: 22,
+    borderWidth: 1, borderRadius: 8, gap: 8,
+    alignItems: 'center', minWidth: 220,
+  },
+  suspenseRing: {
+    position: 'absolute', top: 6, right: 6,
+    width: 16, height: 16, borderWidth: 2, borderRightColor: 'transparent', borderRadius: 8,
+  },
+  suspenseText: { fontSize: 12, fontFamily: 'SpaceMono_700Bold', letterSpacing: 2, marginTop: 4 },
+  suspenseSub: { fontSize: 9, fontFamily: 'SpaceMono_400Regular', letterSpacing: 1 },
 
   combatSubTabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#D6E8F0', marginBottom: 10 },
   subTab: { flex: 1, paddingVertical: 9, alignItems: 'center', borderBottomWidth: 2 },
