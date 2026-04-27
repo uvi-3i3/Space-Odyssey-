@@ -7,8 +7,12 @@ import * as Haptics from 'expo-haptics';
 import { useGame } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
+import { Starfield } from '@/components/Starfield';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Building, Technology } from '@/constants/gameData';
+import { PressableScale } from '@/components/PressableScale';
+import { FadeSlideIn } from '@/components/FadeSlideIn';
+import { GlowPulse } from '@/components/GlowPulse';
 
 const BUILDING_ICONS: Record<string, string> = {
   mine: 'tool', lab: 'cpu', habitat: 'home', defense: 'shield',
@@ -80,11 +84,12 @@ export default function CommandScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <BlueprintGrid />
+      <Starfield count={45} opacity={0.5} />
 
       <View style={styles.topSection}>
         <View style={styles.pillRow}>
           {(['structures', 'research'] as Section[]).map(s => (
-            <TouchableOpacity
+            <PressableScale
               key={s}
               style={[
                 styles.pill,
@@ -93,7 +98,10 @@ export default function CommandScreen() {
                   borderColor: section === s ? colors.primary : colors.border,
                 },
               ]}
-              onPress={() => setSection(s)}
+              onPress={() => { setSection(s); Haptics.selectionAsync(); }}
+              glow={section === s}
+              glowColor={colors.primary}
+              scaleTo={0.94}
             >
               <Feather
                 name={s === 'structures' ? 'home' : 'cpu'}
@@ -103,11 +111,13 @@ export default function CommandScreen() {
               <Text style={[styles.pillText, { color: section === s ? '#FFFFFF' : colors.mutedForeground }]}>
                 {s === 'structures' ? 'STRUCTURES' : 'RESEARCH'}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           ))}
         </View>
 
         {section === 'research' && currentResearchTech && (
+          <FadeSlideIn key={currentResearchTech.id} duration={360} offset={8}>
+          <GlowPulse color={colors.primary} intensity={0.35} duration={2000}>
           <View style={[styles.researchActive, { backgroundColor: colors.primary + '14', borderColor: colors.primary }]}>
             <View style={styles.researchActiveHeader}>
               <Feather name="loader" size={12} color={colors.primary} />
@@ -121,6 +131,8 @@ export default function CommandScreen() {
             </Text>
             <ProgressBar progress={researchProgress} color={colors.secondary} height={3} />
           </View>
+          </GlowPulse>
+          </FadeSlideIn>
         )}
 
         {section === 'research' && (
@@ -129,7 +141,7 @@ export default function CommandScreen() {
               const done = state.technologies.filter(t => t.era === era && t.researched).length;
               const total = state.technologies.filter(t => t.era === era).length;
               return (
-                <TouchableOpacity
+                <PressableScale
                   key={era}
                   style={[
                     styles.eraChip,
@@ -138,7 +150,10 @@ export default function CommandScreen() {
                       backgroundColor: selectedEra === era ? colors.primary + '14' : colors.card,
                     },
                   ]}
-                  onPress={() => setSelectedEra(era)}
+                  onPress={() => { setSelectedEra(era); Haptics.selectionAsync(); }}
+                  glow={selectedEra === era}
+                  glowColor={colors.primary}
+                  scaleTo={0.95}
                 >
                   <Text style={[styles.eraChipLabel, { color: selectedEra === era ? colors.primary : colors.mutedForeground }]}>
                     ERA {era}
@@ -149,7 +164,7 @@ export default function CommandScreen() {
                   <Text style={[styles.eraChipProgress, { color: colors.secondary, fontFamily: 'SpaceMono_400Regular' }]}>
                     {done}/{total}
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
               );
             })}
           </ScrollView>
@@ -170,15 +185,15 @@ export default function CommandScreen() {
               </Text>
             </View>
 
-            {state.buildings.map(building => {
+            {state.buildings.map((building, idx) => {
               const isSelected = selectedBuilding === building.id;
               const canAfford = canAffordBuilding(building);
               const isMaxLevel = building.level >= building.maxLevel;
               const cost = building.level === 0 ? building.baseCost : getUpgradeCost(building);
 
               return (
-                <TouchableOpacity
-                  key={building.id}
+                <FadeSlideIn key={building.id} delay={idx * 35} duration={300} offset={8}>
+                <PressableScale
                   style={[
                     styles.buildingCard,
                     {
@@ -187,7 +202,9 @@ export default function CommandScreen() {
                     },
                   ]}
                   onPress={() => { setSelectedBuilding(isSelected ? null : building.id); Haptics.selectionAsync(); }}
-                  activeOpacity={0.8}
+                  glow={isSelected}
+                  glowColor={colors.primary}
+                  scaleTo={0.98}
                 >
                   <View style={styles.buildingRow}>
                     <View style={[styles.buildingIconBox, { borderColor: colors.border, backgroundColor: colors.muted }]}>
@@ -218,6 +235,7 @@ export default function CommandScreen() {
                   </View>
 
                   {isSelected && (
+                    <FadeSlideIn key={`exp-${building.id}`} duration={280} offset={8}>
                     <View style={[styles.buildingExpanded, { borderTopColor: colors.border }]}>
                       <Text style={[styles.buildingDesc, { color: colors.mutedForeground }]}>{building.description}</Text>
 
@@ -243,24 +261,30 @@ export default function CommandScreen() {
 
                       <View style={styles.actionRow}>
                         {building.level === 0 && (
-                          <TouchableOpacity
+                          <PressableScale
                             style={[styles.actionBtn, { backgroundColor: canAfford ? colors.primary : colors.muted, borderColor: canAfford ? colors.primary : colors.border }]}
                             onPress={() => handleBuildAction(building.id, 'build')}
                             disabled={!canAfford}
+                            glow={canAfford}
+                            glowColor={colors.primary}
+                            scaleTo={0.96}
                           >
                             <Feather name="plus" size={13} color={canAfford ? '#FFFFFF' : colors.mutedForeground} />
                             <Text style={[styles.actionBtnText, { color: canAfford ? '#FFFFFF' : colors.mutedForeground }]}>CONSTRUCT</Text>
-                          </TouchableOpacity>
+                          </PressableScale>
                         )}
                         {building.level > 0 && !isMaxLevel && (
-                          <TouchableOpacity
+                          <PressableScale
                             style={[styles.actionBtn, { backgroundColor: canAfford ? colors.secondary : colors.muted, borderColor: canAfford ? colors.secondary : colors.border }]}
                             onPress={() => handleBuildAction(building.id, 'upgrade')}
                             disabled={!canAfford}
+                            glow={canAfford}
+                            glowColor={colors.secondary}
+                            scaleTo={0.96}
                           >
                             <Feather name="arrow-up" size={13} color={canAfford ? '#FFFFFF' : colors.mutedForeground} />
                             <Text style={[styles.actionBtnText, { color: canAfford ? '#FFFFFF' : colors.mutedForeground }]}>UPGRADE</Text>
-                          </TouchableOpacity>
+                          </PressableScale>
                         )}
                         {isMaxLevel && (
                           <View style={[styles.actionBtn, { borderColor: colors.secondary, backgroundColor: colors.secondary + '14' }]}>
@@ -269,17 +293,20 @@ export default function CommandScreen() {
                           </View>
                         )}
                         {building.level > 0 && (
-                          <TouchableOpacity
+                          <PressableScale
                             style={[styles.demolishBtn, { borderColor: colors.destructive }]}
                             onPress={() => handleBuildAction(building.id, 'demolish')}
+                            scaleTo={0.9}
                           >
                             <Feather name="trash-2" size={14} color={colors.destructive} />
-                          </TouchableOpacity>
+                          </PressableScale>
                         )}
                       </View>
                     </View>
+                    </FadeSlideIn>
                   )}
-                </TouchableOpacity>
+                </PressableScale>
+                </FadeSlideIn>
               );
             })}
           </>
@@ -291,7 +318,7 @@ export default function CommandScreen() {
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>TECHNOLOGY TREE — ERA {selectedEra}</Text>
             </View>
 
-            {state.technologies.filter(t => t.era === selectedEra).map(tech => {
+            {state.technologies.filter(t => t.era === selectedEra).map((tech, idx) => {
               const meetsPrereqs = prereqsMet(tech);
               const affordable = canAffordTech(tech);
               const isResearching = state.currentResearch === tech.id;
@@ -299,8 +326,8 @@ export default function CommandScreen() {
               const available = meetsPrereqs && !tech.researched && !state.currentResearch;
 
               return (
+                <FadeSlideIn key={tech.id} delay={idx * 35} duration={300} offset={8}>
                 <View
-                  key={tech.id}
                   style={[
                     styles.techCard,
                     {
@@ -375,16 +402,19 @@ export default function CommandScreen() {
                   )}
 
                   {available && (
-                    <TouchableOpacity
+                    <PressableScale
                       style={[styles.researchBtn, { backgroundColor: affordable ? catColor : colors.muted, borderColor: affordable ? catColor : colors.border }]}
                       onPress={() => handleResearch(tech.id)}
                       disabled={!affordable}
+                      glow={affordable}
+                      glowColor={catColor}
+                      scaleTo={0.96}
                     >
                       <Feather name="cpu" size={13} color={affordable ? '#FFFFFF' : colors.mutedForeground} />
                       <Text style={[styles.researchBtnText, { color: affordable ? '#FFFFFF' : colors.mutedForeground }]}>
                         {affordable ? 'BEGIN RESEARCH' : 'INSUFFICIENT RESOURCES'}
                       </Text>
-                    </TouchableOpacity>
+                    </PressableScale>
                   )}
 
                   {!meetsPrereqs && !tech.researched && (
@@ -396,6 +426,7 @@ export default function CommandScreen() {
                     </View>
                   )}
                 </View>
+                </FadeSlideIn>
               );
             })}
           </>

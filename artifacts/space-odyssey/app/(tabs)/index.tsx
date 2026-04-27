@@ -8,6 +8,13 @@ import * as Haptics from 'expo-haptics';
 import { useGame } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
+import { Starfield } from '@/components/Starfield';
+import { ScanPulse } from '@/components/ScanPulse';
+import { RotatingPlanet } from '@/components/RotatingPlanet';
+import { FadeSlideIn } from '@/components/FadeSlideIn';
+import { PressableScale } from '@/components/PressableScale';
+import { GlowPulse } from '@/components/GlowPulse';
+import { Shimmer } from '@/components/Shimmer';
 import { PLANET_ZONES } from '@/constants/gameData';
 
 const { width } = Dimensions.get('window');
@@ -71,6 +78,7 @@ export default function PlanetScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <BlueprintGrid />
+      <Starfield count={55} opacity={0.7} />
 
       <ScrollView
         style={styles.scroll}
@@ -116,40 +124,54 @@ export default function PlanetScreen() {
                 : colors.muted;
 
               return (
-                <TouchableOpacity
+                <View
                   key={zone.id}
-                  style={[
-                    styles.zoneNode,
-                    {
-                      left: `${zone.x}%` as any,
-                      top: `${zone.y}%` as any,
-                      borderColor,
-                      backgroundColor: bgColor,
-                      borderStyle: isUnlocked ? 'solid' : 'dashed',
-                    },
-                  ]}
-                  onPress={() => {
-                    if (isUnlocked) {
-                      setSelectedZone(isSelected ? null : zone.id);
-                      Haptics.selectionAsync();
-                    }
+                  style={{
+                    position: 'absolute',
+                    left: `${zone.x}%` as any,
+                    top: `${zone.y}%` as any,
                   }}
-                  disabled={!isUnlocked}
+                  pointerEvents="box-none"
                 >
                   {isSelected && (
-                    <View style={[styles.pulseRing, { borderColor: colors.secondary }]} />
+                    <View style={styles.pulseHost} pointerEvents="none">
+                      <ScanPulse color={colors.secondary} size={36} rings={2} duration={1600} />
+                    </View>
                   )}
-                  <Text style={[styles.zoneNodeText, { color: isUnlocked ? borderColor : colors.mutedForeground }]}>
-                    {isUnlocked ? (onCooldown ? '⏱' : `Z${idx + 1}`) : '🔒'}
-                  </Text>
-                </TouchableOpacity>
+                  <PressableScale
+                    style={[
+                      styles.zoneNode,
+                      {
+                        borderColor,
+                        backgroundColor: bgColor,
+                        borderStyle: isUnlocked ? 'solid' : 'dashed',
+                      },
+                    ]}
+                    onPress={() => {
+                      if (isUnlocked) {
+                        setSelectedZone(isSelected ? null : zone.id);
+                        Haptics.selectionAsync();
+                      }
+                    }}
+                    disabled={!isUnlocked}
+                    glow={isUnlocked}
+                    glowColor={borderColor}
+                    scaleTo={0.9}
+                  >
+                    <Text style={[styles.zoneNodeText, { color: isUnlocked ? borderColor : colors.mutedForeground }]}>
+                      {isUnlocked ? (onCooldown ? '⏱' : `Z${idx + 1}`) : '🔒'}
+                    </Text>
+                  </PressableScale>
+                </View>
               );
             })}
 
-            <View style={[styles.planetCore, { borderColor: colors.primary }]}>
-              <View style={[styles.planetCoreInner, { backgroundColor: colors.primary + '22', borderColor: colors.primary }]}>
-                <Feather name="globe" size={16} color={colors.primary} />
-              </View>
+            <View style={[styles.planetCore, { borderColor: colors.primary }]} pointerEvents="none">
+              <RotatingPlanet duration={48_000}>
+                <View style={[styles.planetCoreInner, { backgroundColor: colors.primary + '22', borderColor: colors.primary }]}>
+                  <Feather name="globe" size={16} color={colors.primary} />
+                </View>
+              </RotatingPlanet>
             </View>
           </View>
 
@@ -161,6 +183,7 @@ export default function PlanetScreen() {
         </View>
 
         {selectedZoneData && (
+          <FadeSlideIn key={selectedZoneData.id} duration={320} offset={10}>
           <Animated.View
             style={[
               styles.zonePanel,
@@ -177,9 +200,9 @@ export default function PlanetScreen() {
                   ZONE · BASE YIELD {selectedZoneData.baseYield}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setSelectedZone(null)}>
+              <PressableScale onPress={() => setSelectedZone(null)} scaleTo={0.85}>
                 <Feather name="x" size={16} color={colors.mutedForeground} />
-              </TouchableOpacity>
+              </PressableScale>
             </View>
 
             <View style={[styles.separator, { backgroundColor: colors.border }]} />
@@ -209,7 +232,7 @@ export default function PlanetScreen() {
             </Text>
             <View style={styles.miningRow}>
               {MINING_TYPES.map(mt => (
-                <TouchableOpacity
+                <PressableScale
                   key={mt.type}
                   style={[
                     styles.miningBtn,
@@ -219,6 +242,9 @@ export default function PlanetScreen() {
                     },
                   ]}
                   onPress={() => { setMiningType(mt.type); Haptics.selectionAsync(); }}
+                  glow={miningType === mt.type}
+                  glowColor={mt.color}
+                  scaleTo={0.95}
                 >
                   <Feather name={mt.icon as any} size={13} color={miningType === mt.type ? mt.color : colors.mutedForeground} />
                   <Text style={[styles.miningBtnLabel, { color: miningType === mt.type ? mt.color : colors.mutedForeground }]}>
@@ -227,21 +253,25 @@ export default function PlanetScreen() {
                   <Text style={[styles.miningBtnRisk, { color: miningType === mt.type ? mt.color : colors.mutedForeground }]}>
                     {mt.risk}
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
               ))}
             </View>
 
-            <TouchableOpacity
+            <PressableScale
               style={[styles.initiateBtn, { backgroundColor: colors.primary, borderColor: colors.primary }]}
               onPress={handleMine}
+              glow
+              glowColor={colors.primary}
+              scaleTo={0.97}
             >
               <Feather name="activity" size={16} color="#FFFFFF" />
               <Text style={[styles.initiateBtnText, { color: '#FFFFFF', fontFamily: 'SpaceMono_700Bold' }]}>
                 INITIATE EXTRACTION
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
 
             {result && (
+              <FadeSlideIn duration={260} offset={6}>
               <View style={[
                 styles.resultBanner,
                 {
@@ -265,8 +295,10 @@ export default function PlanetScreen() {
                   )}
                 </View>
               </View>
+              </FadeSlideIn>
             )}
           </Animated.View>
+          </FadeSlideIn>
         )}
 
         {!selectedZone && (
@@ -287,16 +319,17 @@ export default function PlanetScreen() {
           </View>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.codexScroll} contentContainerStyle={styles.codexContent}>
-            {state.elements.map(elem => {
+            {state.elements.map((elem, i) => {
               const rarityColor = getRarityColor(elem.rarity, colors);
-              return (
+              const isRare = elem.discovered && (elem.rarity === 'legendary' || elem.rarity === 'epic');
+              const cell = (
                 <View
-                  key={elem.id}
                   style={[
                     styles.periodicCell,
                     {
                       borderColor: elem.discovered ? rarityColor : colors.border,
                       backgroundColor: elem.discovered ? rarityColor + '12' : colors.muted,
+                      overflow: 'hidden',
                     },
                   ]}
                 >
@@ -314,7 +347,17 @@ export default function PlanetScreen() {
                       {elem.quantity > 999 ? `${Math.floor(elem.quantity / 1000)}K` : elem.quantity}
                     </Text>
                   )}
+                  {isRare && <Shimmer color={rarityColor} duration={2800} intensity={0.22} />}
                 </View>
+              );
+              return (
+                <FadeSlideIn key={elem.id} delay={Math.min(i, 14) * 22} duration={320} offset={6}>
+                  {isRare ? (
+                    <GlowPulse color={rarityColor} duration={2600} min={0.1} max={0.45}>
+                      {cell}
+                    </GlowPulse>
+                  ) : cell}
+                </FadeSlideIn>
               );
             })}
           </ScrollView>
@@ -362,13 +405,14 @@ const styles = StyleSheet.create({
     marginLeft: -15,
     marginTop: -15,
   },
-  pulseRing: {
+  pulseHost: {
     position: 'absolute',
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    opacity: 0.4,
+    width: 36,
+    height: 36,
+    left: -18,
+    top: -18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   zoneNodeText: { fontSize: 9, fontFamily: 'Inter_700Bold' },
 

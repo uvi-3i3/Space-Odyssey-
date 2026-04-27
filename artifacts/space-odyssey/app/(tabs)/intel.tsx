@@ -8,8 +8,13 @@ import * as Haptics from 'expo-haptics';
 import { useGame, CombatEntry } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
+import { Starfield } from '@/components/Starfield';
 import { ProgressBar } from '@/components/ProgressBar';
 import { RarityBadge } from '@/components/RarityBadge';
+import { PressableScale } from '@/components/PressableScale';
+import { FadeSlideIn } from '@/components/FadeSlideIn';
+import { Typewriter } from '@/components/Typewriter';
+import { GlowPulse } from '@/components/GlowPulse';
 
 type IntelSection = 'events' | 'combat' | 'factions';
 type CombatStrategy = 'attack' | 'defend' | 'retreat';
@@ -134,11 +139,12 @@ export default function IntelScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <BlueprintGrid />
+      <Starfield count={45} opacity={0.5} />
 
       <View style={styles.topBar}>
         <View style={styles.pillRow}>
           {(['events', 'combat', 'factions'] as IntelSection[]).map(s => (
-            <TouchableOpacity
+            <PressableScale
               key={s}
               style={[
                 styles.pill,
@@ -147,7 +153,10 @@ export default function IntelScreen() {
                   borderColor: section === s ? colors.primary : colors.border,
                 },
               ]}
-              onPress={() => setSection(s)}
+              onPress={() => { setSection(s); Haptics.selectionAsync(); }}
+              glow={section === s}
+              glowColor={colors.primary}
+              scaleTo={0.94}
             >
               <Feather
                 name={s === 'events' ? 'radio' : s === 'combat' ? 'crosshair' : 'users'}
@@ -157,23 +166,25 @@ export default function IntelScreen() {
               <Text style={[styles.pillText, { color: section === s ? '#FFFFFF' : colors.mutedForeground }]}>
                 {s.toUpperCase()}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           ))}
         </View>
 
         <View style={styles.pillActions}>
-          <TouchableOpacity
+          <PressableScale
             style={[styles.iconAction, { borderColor: colors.border }]}
             onPress={() => setShowAwards(true)}
+            scaleTo={0.88}
           >
             <Feather name="award" size={15} color={colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
+          </PressableScale>
+          <PressableScale
             style={[styles.iconAction, { borderColor: colors.border }]}
             onPress={() => setShowSettings(true)}
+            scaleTo={0.88}
           >
             <Feather name="settings" size={15} color={colors.mutedForeground} />
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       </View>
 
@@ -211,33 +222,38 @@ export default function IntelScreen() {
                 <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
                   Events occur as you explore and mine. Initiate a deep-space scan for AI-generated narrative encounters.
                 </Text>
-                <TouchableOpacity
+                <PressableScale
                   style={[styles.scanBtn, { borderColor: colors.primary, backgroundColor: colors.primary + '14' }]}
                   onPress={() => { generateEvent(); Haptics.selectionAsync(); }}
+                  glow
+                  glowColor={colors.primary}
+                  scaleTo={0.96}
                 >
                   <Feather name="zap" size={13} color={colors.primary} />
                   <Text style={[styles.scanBtnText, { color: colors.primary }]}>INITIATE DEEP SCAN</Text>
-                </TouchableOpacity>
+                </PressableScale>
               </View>
             )}
 
             {state.activeEvents.length > 0 && !generatingEvent && (
-              <TouchableOpacity
+              <PressableScale
                 style={[styles.scanAgain, { borderColor: colors.primary + '55' }]}
                 onPress={() => { generateEvent(); Haptics.selectionAsync(); }}
+                scaleTo={0.97}
               >
                 <Feather name="zap" size={11} color={colors.primary} />
                 <Text style={[styles.scanAgainText, { color: colors.primary }]}>SCAN FOR MORE SIGNALS</Text>
-              </TouchableOpacity>
+              </PressableScale>
             )}
 
-            {state.activeEvents.map(event => {
+            {state.activeEvents.map((event, eventIdx) => {
               const typeColor = EVENT_TYPE_COLORS[event.type] ?? colors.primary;
               const typeIcon = EVENT_TYPE_ICONS[event.type] ?? 'radio';
+              const isAI = String(event.id).startsWith('ai_');
 
               return (
+                <FadeSlideIn key={event.id} delay={eventIdx * 60} duration={420} offset={14}>
                 <View
-                  key={event.id}
                   style={[styles.eventCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                 >
                   <View style={[styles.eventLeftBorder, { backgroundColor: typeColor }]} />
@@ -247,7 +263,7 @@ export default function IntelScreen() {
                         <Feather name={typeIcon as any} size={9} color={typeColor} />
                         <Text style={[styles.typeTagText, { color: typeColor }]}>{event.type.toUpperCase()}</Text>
                       </View>
-                      {String(event.id).startsWith('ai_') && (
+                      {isAI && (
                         <View style={[styles.aiTag, { borderColor: colors.secondary, backgroundColor: colors.secondary + '14' }]}>
                           <Feather name="cpu" size={8} color={colors.secondary} />
                           <Text style={[styles.aiTagText, { color: colors.secondary }]}>AI</Text>
@@ -258,16 +274,24 @@ export default function IntelScreen() {
                       </Text>
                     </View>
 
-                    <Text style={[styles.eventTitle, { color: colors.foreground }]}>{event.title}</Text>
+                    <Typewriter
+                      text={event.title}
+                      enabled={isAI}
+                      speed={14}
+                      style={[styles.eventTitle, { color: colors.foreground }]}
+                    />
                     <Text style={[styles.eventDesc, { color: colors.mutedForeground }]}>{event.description}</Text>
 
                     <Text style={[styles.choiceLabel, { color: typeColor }]}>// SELECT RESPONSE:</Text>
 
                     {event.choices.map((choice, idx) => (
-                      <TouchableOpacity
-                        key={choice.id}
+                      <FadeSlideIn key={choice.id} delay={120 + idx * 40} duration={300} offset={6}>
+                      <PressableScale
                         style={[styles.choiceBtn, { borderColor: typeColor + '55', backgroundColor: typeColor + '0C' }]}
                         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); resolveEvent(event.id, choice.id); }}
+                        glow
+                        glowColor={typeColor}
+                        scaleTo={0.98}
                       >
                         <View style={[styles.choiceNum, { borderColor: typeColor, backgroundColor: typeColor + '22' }]}>
                           <Text style={[styles.choiceNumText, { color: typeColor, fontFamily: 'SpaceMono_700Bold' }]}>{idx + 1}</Text>
@@ -288,10 +312,12 @@ export default function IntelScreen() {
                           </View>
                         </View>
                         <Feather name="chevron-right" size={14} color={typeColor} />
-                      </TouchableOpacity>
+                      </PressableScale>
+                      </FadeSlideIn>
                     ))}
                   </View>
                 </View>
+                </FadeSlideIn>
               );
             })}
 
@@ -347,19 +373,22 @@ export default function IntelScreen() {
                     </Text>
                   </View>
                 ) : (
-                  state.factions.filter(f => f.discovered).map(faction => {
+                  state.factions.filter(f => f.discovered).map((faction, fIdx) => {
                     const relColor = getRelColor(faction.relationship);
                     const isSelected = selectedFaction === faction.id;
                     const repProgress = (faction.reputation + 100) / 200;
 
                     return (
-                      <TouchableOpacity
-                        key={faction.id}
+                      <FadeSlideIn key={faction.id} delay={fIdx * 50} duration={320} offset={10}>
+                      <PressableScale
                         style={[
                           styles.factionCard,
                           { borderColor: isSelected ? relColor : colors.border, backgroundColor: colors.card },
                         ]}
                         onPress={() => { setSelectedFaction(isSelected ? null : faction.id); Haptics.selectionAsync(); }}
+                        glow={isSelected}
+                        glowColor={relColor}
+                        scaleTo={0.98}
                       >
                         <View style={styles.factionTop}>
                           <View style={[styles.factionIcon, { borderColor: relColor + '55', backgroundColor: relColor + '14' }]}>
@@ -381,7 +410,8 @@ export default function IntelScreen() {
                             <ProgressBar progress={repProgress} color={relColor} height={3} />
                           </View>
                         </View>
-                      </TouchableOpacity>
+                      </PressableScale>
+                      </FadeSlideIn>
                     );
                   })
                 )}
@@ -389,11 +419,11 @@ export default function IntelScreen() {
             )}
 
             {combatMode === 'combat' && selectedFaction && (
-              <>
+              <FadeSlideIn key={`strat-${selectedFaction}`} duration={360} offset={12}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 4 }]}>COMBAT STRATEGY</Text>
-                {STRATEGIES.map(s => (
-                  <TouchableOpacity
-                    key={s.type}
+                {STRATEGIES.map((s, idx) => (
+                  <FadeSlideIn key={s.type} delay={idx * 40} duration={280} offset={6}>
+                  <PressableScale
                     style={[
                       styles.stratCard,
                       {
@@ -401,7 +431,10 @@ export default function IntelScreen() {
                         backgroundColor: strategy === s.type ? s.color + '14' : colors.card,
                       },
                     ]}
-                    onPress={() => setStrategy(s.type)}
+                    onPress={() => { setStrategy(s.type); Haptics.selectionAsync(); }}
+                    glow={strategy === s.type}
+                    glowColor={s.color}
+                    scaleTo={0.97}
                   >
                     <Feather name={s.icon as any} size={18} color={strategy === s.type ? s.color : colors.mutedForeground} />
                     <View style={{ flex: 1 }}>
@@ -409,20 +442,27 @@ export default function IntelScreen() {
                       <Text style={[styles.stratDesc, { color: colors.mutedForeground }]}>{s.desc}</Text>
                     </View>
                     {strategy === s.type && <Feather name="check-circle" size={14} color={s.color} />}
-                  </TouchableOpacity>
+                  </PressableScale>
+                  </FadeSlideIn>
                 ))}
 
-                <TouchableOpacity
+                <GlowPulse color={colors.destructive} intensity={0.5} duration={1800}>
+                <PressableScale
                   style={[styles.engageBtn, { backgroundColor: colors.destructive }]}
                   onPress={handleCombat}
+                  glow
+                  glowColor={colors.destructive}
+                  scaleTo={0.95}
                 >
                   <Feather name="crosshair" size={16} color="#FFFFFF" />
                   <Text style={[styles.engageBtnText, { color: '#FFFFFF', fontFamily: 'SpaceMono_700Bold' }]}>
                     ENGAGE FLEET
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
+                </GlowPulse>
 
                 {lastCombat && (
+                  <FadeSlideIn key={`combat-${lastCombat.timestamp}`} duration={420} offset={10}>
                   <View style={[
                     styles.combatResult,
                     {
@@ -442,18 +482,22 @@ export default function IntelScreen() {
                       <Text style={[styles.combatResultDesc, { color: colors.mutedForeground }]}>{lastCombat.details}</Text>
                     </View>
                   </View>
+                  </FadeSlideIn>
                 )}
-              </>
+              </FadeSlideIn>
             )}
 
             {combatMode === 'espionage' && selectedFaction && (
-              <>
+              <FadeSlideIn key={`esp-${selectedFaction}`} duration={360} offset={12}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 4 }]}>COVERT OPERATIONS</Text>
-                {MISSIONS.map(m => (
-                  <TouchableOpacity
-                    key={m.type}
+                {MISSIONS.map((m, idx) => (
+                  <FadeSlideIn key={m.type} delay={idx * 40} duration={300} offset={6}>
+                  <PressableScale
                     style={[styles.missionCard, { borderColor: m.color + '55', backgroundColor: colors.card }]}
                     onPress={() => handleEspionage(m.type)}
+                    glow
+                    glowColor={m.color}
+                    scaleTo={0.97}
                   >
                     <View style={[styles.missionIcon, { borderColor: m.color, backgroundColor: m.color + '14' }]}>
                       <Feather name={m.icon as any} size={16} color={m.color} />
@@ -470,25 +514,29 @@ export default function IntelScreen() {
                       </View>
                     </View>
                     <Feather name="chevron-right" size={14} color={m.color} />
-                  </TouchableOpacity>
+                  </PressableScale>
+                  </FadeSlideIn>
                 ))}
 
-                {state.espionageLog.slice(0, 3).map(entry => (
-                  <View key={entry.id} style={[styles.logEntry, { borderColor: colors.border }]}>
+                {state.espionageLog.slice(0, 3).map((entry, idx) => (
+                  <FadeSlideIn key={entry.id} delay={idx * 40} duration={260} offset={4}>
+                  <View style={[styles.logEntry, { borderColor: colors.border }]}>
                     <Feather name={entry.success ? 'check-circle' : 'x-circle'} size={12} color={entry.success ? colors.secondary : colors.destructive} />
                     <Text style={[styles.logText, { color: colors.mutedForeground }]}>{entry.details}</Text>
                   </View>
+                  </FadeSlideIn>
                 ))}
-              </>
+              </FadeSlideIn>
             )}
 
             {combatMode === 'fleet' && (
-              <>
+              <FadeSlideIn key="fleet" duration={360} offset={12}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>FLEET MANAGEMENT</Text>
-                {state.units.map(unit => {
+                {state.units.map((unit, idx) => {
                   const canAffordUnit = Object.entries(unit.cost).every(([id, amt]) => getElementQuantity(id) >= amt * 5);
                   return (
-                    <View key={unit.id} style={[styles.unitCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                    <FadeSlideIn key={unit.id} delay={idx * 50} duration={320} offset={8}>
+                    <View style={[styles.unitCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
                       <View style={[styles.unitIcon, { borderColor: colors.primary, backgroundColor: colors.primary + '14' }]}>
                         <Feather name="navigation" size={16} color={colors.primary} />
                       </View>
@@ -507,17 +555,21 @@ export default function IntelScreen() {
                           ))}
                         </View>
                       </View>
-                      <TouchableOpacity
+                      <PressableScale
                         style={[styles.recruitBtn, { backgroundColor: canAffordUnit ? colors.primary : colors.muted }]}
                         onPress={() => handleRecruit(unit.id)}
                         disabled={!canAffordUnit}
+                        glow={canAffordUnit}
+                        glowColor={colors.primary}
+                        scaleTo={0.92}
                       >
                         <Text style={[styles.recruitBtnText, { color: canAffordUnit ? '#FFFFFF' : colors.mutedForeground }]}>+5</Text>
-                      </TouchableOpacity>
+                      </PressableScale>
                     </View>
+                    </FadeSlideIn>
                   );
                 })}
-              </>
+              </FadeSlideIn>
             )}
           </>
         )}
@@ -525,12 +577,13 @@ export default function IntelScreen() {
         {section === 'factions' && (
           <>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>ALLIANCE STATUS</Text>
-            {state.factions.map(faction => {
+            {state.factions.map((faction, idx) => {
               const relColor = getRelColor(faction.relationship);
               const repProgress = (faction.reputation + 100) / 200;
 
               return (
-                <View key={faction.id} style={[styles.factionDetailCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                <FadeSlideIn key={faction.id} delay={idx * 60} duration={360} offset={12}>
+                <View style={[styles.factionDetailCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
                   <View style={styles.factionTop}>
                     <View style={[styles.factionIconLarge, { borderColor: relColor, backgroundColor: relColor + '14' }]}>
                       <Feather name="users" size={20} color={relColor} />
@@ -572,6 +625,7 @@ export default function IntelScreen() {
                     </View>
                   )}
                 </View>
+                </FadeSlideIn>
               );
             })}
           </>
@@ -618,18 +672,23 @@ export default function IntelScreen() {
                 <Text style={[styles.dayRewardText, { color: colors.foreground }]}>
                   {DAY_REWARDS[Math.min(state.loginStreak - 1, 6)]?.rewards}
                 </Text>
-                <TouchableOpacity
+                <PressableScale
                   style={[styles.claimBtn, { backgroundColor: state.dailyRewardClaimed ? colors.muted : colors.primary }]}
                   onPress={handleClaimDaily}
                   disabled={state.dailyRewardClaimed}
+                  glow={!state.dailyRewardClaimed}
+                  glowColor={colors.primary}
+                  scaleTo={0.95}
                 >
                   <Feather name={state.dailyRewardClaimed ? 'check' : 'gift'} size={14} color={state.dailyRewardClaimed ? colors.mutedForeground : '#FFFFFF'} />
                   <Text style={[styles.claimBtnText, { color: state.dailyRewardClaimed ? colors.mutedForeground : '#FFFFFF' }]}>
                     {state.dailyRewardClaimed ? 'CLAIMED' : 'CLAIM REWARD'}
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
                 {claimMsg && (
+                  <FadeSlideIn key={claimMsg} duration={280} offset={6}>
                   <Text style={[styles.claimMsg, { color: colors.secondary }]}>{claimMsg}</Text>
+                  </FadeSlideIn>
                 )}
               </View>
 
@@ -638,11 +697,12 @@ export default function IntelScreen() {
               </Text>
               <ProgressBar progress={state.achievements.filter(a => a.unlocked).length / state.achievements.length} color={colors.primary} height={3} />
 
-              {state.achievements.map(a => {
+              {state.achievements.map((a, idx) => {
                 const rarityColors: Record<string, string> = { legendary: colors.legendary, epic: colors.epic, rare: colors.rare, uncommon: colors.secondary, common: colors.common };
                 const color = rarityColors[a.rarity] ?? colors.common;
                 return (
-                  <View key={a.id} style={[styles.achievRow, { borderColor: a.unlocked ? color + '55' : colors.border, backgroundColor: a.unlocked ? color + '0C' : colors.muted }]}>
+                  <FadeSlideIn key={a.id} delay={idx * 25} duration={260} offset={6}>
+                  <View style={[styles.achievRow, { borderColor: a.unlocked ? color + '55' : colors.border, backgroundColor: a.unlocked ? color + '0C' : colors.muted }]}>
                     <Feather name={a.unlocked ? 'check-circle' : 'lock'} size={14} color={a.unlocked ? color : colors.mutedForeground} />
                     <View style={{ flex: 1, gap: 2 }}>
                       <Text style={[styles.achievName, { color: a.unlocked ? colors.foreground : colors.mutedForeground }]}>{a.name}</Text>
@@ -651,12 +711,13 @@ export default function IntelScreen() {
                     </View>
                     <RarityBadge rarity={a.rarity} />
                   </View>
+                  </FadeSlideIn>
                 );
               })}
             </ScrollView>
-            <TouchableOpacity style={[styles.closeSheet, { borderColor: colors.border }]} onPress={() => setShowAwards(false)}>
+            <PressableScale style={[styles.closeSheet, { borderColor: colors.border }]} onPress={() => setShowAwards(false)} scaleTo={0.96}>
               <Text style={[styles.closeSheetText, { color: colors.primary }]}>CLOSE</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         </View>
       </Modal>
@@ -726,22 +787,25 @@ export default function IntelScreen() {
                     Prestige points: <Text style={{ color: colors.legendary, fontFamily: 'SpaceMono_700Bold' }}>{state.prestigePoints} → {state.prestigePoints + 5}</Text>
                   </Text>
                 </View>
-                <TouchableOpacity
+                <GlowPulse color={colors.legendary} intensity={0.4} duration={2400}>
+                <PressableScale
                   style={[styles.prestigeBtn, { borderColor: colors.legendary, backgroundColor: colors.legendary + '14' }]}
                   onPress={() => { setShowSettings(false); setTimeout(handlePrestige, 300); }}
+                  scaleTo={0.96}
                 >
                   <Feather name="repeat" size={14} color={colors.legendary} />
                   <Text style={[styles.prestigeBtnText, { color: colors.legendary }]}>INITIATE PRESTIGE</Text>
-                </TouchableOpacity>
+                </PressableScale>
+                </GlowPulse>
               </View>
 
               <Text style={[styles.aboutText, { color: colors.mutedForeground }]}>
                 Space Odyssey: Galactic Evolution · v1.0.0 · April 2026
               </Text>
             </ScrollView>
-            <TouchableOpacity style={[styles.closeSheet, { borderColor: colors.border }]} onPress={() => setShowSettings(false)}>
+            <PressableScale style={[styles.closeSheet, { borderColor: colors.border }]} onPress={() => setShowSettings(false)} scaleTo={0.96}>
               <Text style={[styles.closeSheetText, { color: colors.primary }]}>CLOSE</Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         </View>
       </Modal>

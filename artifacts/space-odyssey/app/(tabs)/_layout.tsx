@@ -3,6 +3,7 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { AnimatedTabIcon } from "@/components/AnimatedTabIcon";
 
 function ClassicTabLayout() {
   const colors = useColors();
@@ -42,21 +43,21 @@ function ClassicTabLayout() {
         name="index"
         options={{
           title: "Planet",
-          tabBarIcon: ({ color }) => <Feather name="globe" size={20} color={color} />,
+          tabBarIcon: ({ color, focused }) => <AnimatedTabIcon name="globe" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="command"
         options={{
           title: "Command",
-          tabBarIcon: ({ color }) => <Feather name="sliders" size={20} color={color} />,
+          tabBarIcon: ({ color, focused }) => <AnimatedTabIcon name="sliders" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="intel"
         options={{
           title: "Intel",
-          tabBarIcon: ({ color }) => <Feather name="radio" size={20} color={color} />,
+          tabBarIcon: ({ color, focused }) => <AnimatedTabIcon name="radio" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen name="planet" options={{ href: null }} />

@@ -47,6 +47,26 @@ Mobile-first idle RPG where you guide a civilization through planetary explorati
 - `artifacts/space-odyssey/components/ResourceBar.tsx` — Top HUD bar
 - `artifacts/space-odyssey/app/(tabs)/` — 7 screen tabs
 
+### Motion Design System
+Lightweight, premium sci-fi motion built on RN `Animated` API (native driver where supported, JS fallback on web). All durations 200-600ms, designed to be subtle and non-distracting.
+
+Reusable primitives in `artifacts/space-odyssey/components/`:
+- `Starfield.tsx` — twinkling background star field
+- `RotatingPlanet.tsx` — slow rotation + subtle scale breathe for the planet core
+- `ScanPulse.tsx` — concentric scan ring around selected zone
+- `PressableScale.tsx` — universal button press: scale-down + optional glow halo
+- `FadeSlideIn.tsx` — entrance animation (opacity + translate) with delay/offset
+- `Typewriter.tsx` — character-by-character reveal for AI narrative titles
+- `Shimmer.tsx` — diagonal sheen for rare/epic/legendary elements
+- `GlowPulse.tsx` — slow breathing glow halo for hero CTAs (engage, prestige, active research)
+- `AnimatedTabIcon.tsx` — tab bar icon with spring scale + halo glow on focus
+
+Integration coverage:
+- Planet (`app/(tabs)/index.tsx`) — starfield, rotating planet, scan pulse, zone node press, mining buttons, panel/banner fade-in, codex shimmer
+- Command (`app/(tabs)/command.tsx`) — section pills, era chips, building cards, expand details, construct/upgrade/research buttons, active research glow pulse
+- Intel (`app/(tabs)/intel.tsx`) — section pills, faction cards, strategy cards, engage fleet glow, mission cards, deep-scan typewriter on AI events, prestige glow, daily-claim button
+- Tab bar (`app/(tabs)/_layout.tsx`) — animated focused tab icon
+
 ## Stack
 
 - **Monorepo tool**: pnpm workspaces
