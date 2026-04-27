@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const STABILITY_API_KEY = `OPENAI_API_KEY`;
+const STABILITY_API_KEY = process.env.STABILITY_API_KEY_;
 
 const PLANETS = [
   ['TERRAN', 'blue and green Earth-like world with continents and cloud cover'],
