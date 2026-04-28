@@ -1,0 +1,27 @@
+Act as a Lead Game Designer and React Native Developer. We are fundamentally changing how the Event System works in Space Odyssey: Galactic Evolution.
+​Instead of calling the OpenAI API in real-time during gameplay, we will use a one-time setup script to pre-generate a massive, branching story tree using the API. Once the story tree is generated and saved as a local file, we will completely disconnect the API key and rewire the game to read from this local story file.
+​Strict Guardrails (DO NOT BREAK THE GAME)
+​Preserve Architecture: Keep the game state in GameContext.tsx.
+​No Jargon: Explain your steps in plain, simple English. Avoid excessive computer science terminology.
+​Remove "AI" References: The final game UI must not say "AI Generated." These are native "Deep Space Events."
+​Execute the following overhaul step-by-step:
+​Phase 1: Build the Story Generator Tool (One-Time Use)
+​Create a Generator Script: Write an isolated script (e.g., generateStoryTree.js) separate from the main mobile app. This script will use the OpenAI API.
+​The Prompt Instructions: Instruct the OpenAI model to generate a vast JSON file containing a branching story network. It should create distinct "Eras" or "Chapters."
+​Node Structure: Each story "node" must contain:
+​An atmospheric sci-fi story prompt.
+​Exactly two choices (One Safe, One High-Risk).
+​Specific game consequences for each choice (e.g., lose 1 level of Defense Tower, gain 500 Copper, decrease Stability).
+​The exact ID of the next story node to jump to based on the player's choice, creating a true branching path.
+​Output to File: The script must save the AI's output into a new, static local file called storyData.ts.
+​Phase 2: Rewire the Game Engine (Offline Mode)
+​Unplug the API: Once storyData.ts is fully generated and populated, completely remove the real-time OpenAI fetch calls from GameContext.tsx. You can now remove the API key from the environment.
+​Read from Local Data: Update the event triggering logic in GameContext.tsx. When it's time for an event, the game should look at storyData.ts, find the player's current story node ID, and display that pre-written text and choices.
+​Track Story Progress: Add a currentStoryNodeId to the player's save state. When a player makes a choice, apply the pre-calculated consequences from the file, and update their saved ID to the next branch in the story.
+​Phase 3: Integration & UI Polish
+​Apply Consequences: Ensure the game logic correctly reads the static consequences (like stat changes or stability drops) from the storyData.ts file and applies them via the setState(prev => ...) pattern.
+​Immersive UI: Display these static events using the existing UI event cards, dimming the background to show a critical story moment has paused the game.
+​Output Instructions:
+Do not output the entire codebase.
+Start exclusively with Phase 1 (Build the Story Generator Tool). Provide the code for the one-time generation script and the exact prompt you will send to the OpenAI API to build the branching JSON structure.
+Wait for my confirmation that we have successfully generated and saved the storyData.ts file before we move on to Phase 2 and unplug the API.
