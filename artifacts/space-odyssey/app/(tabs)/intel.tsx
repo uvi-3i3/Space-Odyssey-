@@ -55,7 +55,7 @@ export default function IntelScreen() {
   const {
     state, resolveEvent, generateEvent, generatingEvent,
     engageCombat, runEspionage, recruitUnits, getElementQuantity,
-    claimDailyReward, performPrestige,
+    claimDailyReward, performPrestige, getFactionRelationship,
   } = useGame();
   const colors = useColors();
   const [section, setSection] = useState<IntelSection>('events');
@@ -485,7 +485,8 @@ export default function IntelScreen() {
                   </View>
                 ) : (
                   state.factions.filter(f => f.discovered).map((faction, fIdx) => {
-                    const relColor = getRelColor(faction.relationship);
+                    const relationship = getFactionRelationship(faction.id);
+                    const relColor = getRelColor(relationship);
                     const isSelected = selectedFaction === faction.id;
                     const repProgress = (faction.reputation + 100) / 200;
 
@@ -510,7 +511,7 @@ export default function IntelScreen() {
                             <Text style={[styles.factionDesc, { color: colors.mutedForeground }]}>{faction.description}</Text>
                           </View>
                           <View style={[styles.relBadge, { borderColor: relColor, backgroundColor: relColor + '14' }]}>
-                            <Text style={[styles.relBadgeText, { color: relColor }]}>{faction.relationship.toUpperCase()}</Text>
+                            <Text style={[styles.relBadgeText, { color: relColor }]}>{relationship.toUpperCase()}</Text>
                           </View>
                         </View>
                         <View style={styles.repRow}>
@@ -689,7 +690,8 @@ export default function IntelScreen() {
           <>
             <Text style={[styles.sectionTitle, { color: colors.foreground }]}>ALLIANCE STATUS</Text>
             {state.factions.map((faction, idx) => {
-              const relColor = getRelColor(faction.relationship);
+              const relationship = getFactionRelationship(faction.id);
+              const relColor = getRelColor(relationship);
               const repProgress = (faction.reputation + 100) / 200;
 
               return (
@@ -706,7 +708,7 @@ export default function IntelScreen() {
                       </Text>
                     </View>
                     <View style={[styles.relBadge, { borderColor: relColor, backgroundColor: relColor + '14' }]}>
-                      <Text style={[styles.relBadgeText, { color: relColor }]}>{faction.relationship.toUpperCase()}</Text>
+                      <Text style={[styles.relBadgeText, { color: relColor }]}>{relationship.toUpperCase()}</Text>
                     </View>
                   </View>
 

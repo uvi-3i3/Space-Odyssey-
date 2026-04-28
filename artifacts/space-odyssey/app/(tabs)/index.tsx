@@ -195,6 +195,11 @@ export default function PlanetScreen() {
                 <Text style={[styles.zonePanelId, { color: colors.mutedForeground }]}>
                   ZONE · BASE YIELD {selectedZoneData.baseYield}
                 </Text>
+                {selectedZoneData.hint && (
+                  <Text style={[styles.zonePanelId, { color: colors.warning, marginTop: 4 }]}>
+                    ✦ {selectedZoneData.hint}
+                  </Text>
+                )}
               </View>
               <PressableScale onPress={() => setSelectedZone(null)} scaleTo={0.85}>
                 <Feather name="x" size={16} color={colors.mutedForeground} />

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Element, Building, Technology, GameEvent, Faction, Achievement,
+  PlanetZone, RelationshipTier, deriveRelationship,
   INITIAL_ELEMENTS, INITIAL_BUILDINGS, INITIAL_TECHNOLOGIES,
   INITIAL_FACTIONS, INITIAL_ACHIEVEMENTS, PLANET_ZONES, NARRATIVE_EVENTS,
 } from '@/constants/gameData';
@@ -29,7 +30,7 @@ export interface GameState {
   activeEvents: GameEvent[];
   completedEvents: string[];
   eventLog: EventResolution[];
-  planetZones: typeof PLANET_ZONES;
+  planetZones: PlanetZone[];
   lastSave: number;
   totalPlayTime: number;
   loginStreak: number;
@@ -96,7 +97,9 @@ const DEFAULT_UNITS: FleetUnit[] = [
 
 const initialState: GameState = {
   era: 1,
-  credits: 100,
+  // Phase 2 — early-game starter buffer so the player can afford the first
+  // building or two before passive income kicks in.
+  credits: 250,
   prestigePoints: 0,
   prestigeLevel: 0,
   population: 10,
@@ -125,7 +128,9 @@ const initialState: GameState = {
   combatLog: [],
   espionageLog: [],
   units: DEFAULT_UNITS,
-  storageCapacity: 1000,
+  // Phase 2 — early-game vault buffer (was 1000) so newly mined elements have
+  // somewhere to go before the player can build/upgrade an Element Vault.
+  storageCapacity: 2000,
   activeTab: 'planet',
 };
 
@@ -257,6 +262,8 @@ interface GameContextType {
   getElementQuantity: (elementId: string) => number;
   getBuilding: (buildingId: string) => Building | undefined;
   getTech: (techId: string) => Technology | undefined;
+  /** Phase 2 — derived live from `faction.reputation`; never store this. */
+  getFactionRelationship: (factionId: string) => RelationshipTier;
   generateEvent: () => void;
   generatingEvent: boolean;
 }
@@ -314,14 +321,20 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     const mineMultiplier = 1 + (s.prestigeLevel * 0.1);
     const elems = [...s.elements];
     for (const building of mineBuildings) {
-      const rate = building.productionRate * building.level * mineMultiplier;
+      // Phase 2 — also honour the tech-driven mining multiplier offline so
+      // researched techs feel real after coming back from a session.
+      const rate = building.productionRate * building.level * mineMultiplier * s.miningMultiplier;
       const totalGained = Math.floor(rate * seconds / 60);
       if (totalGained > 0) {
         const zone = PLANET_ZONES[0];
+        const perElem = Math.floor(totalGained / zone.elements.length);
         for (const elemId of zone.elements) {
           const idx = elems.findIndex(e => e.id === elemId);
           if (idx >= 0) {
-            elems[idx] = { ...elems[idx], quantity: elems[idx].quantity + Math.floor(totalGained / zone.elements.length) };
+            // Phase 2 — strictly enforce vault capacity offline, mirroring the
+            // online tick. Otherwise long offline sessions blew past storage.
+            const newQty = Math.min(elems[idx].quantity + perElem, s.storageCapacity);
+            elems[idx] = { ...elems[idx], quantity: newQty };
           }
         }
       }
@@ -356,7 +369,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
       }
       updated.elements = elems;
-      updated.credits = Math.min(prev.credits + 0.1, 999999);
+      // Phase 2 — modest passive credit bump (was 0.1/sec) to ease the early-
+      // game credit wall before Trade Nexus and refinery income come online.
+      updated.credits = Math.min(prev.credits + 0.25, 999999);
       updated.totalPlayTime = prev.totalPlayTime + 1;
 
       let researchCompleted = false;
@@ -398,6 +413,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const getBuilding = (buildingId: string) => state.buildings.find(b => b.id === buildingId);
   const getTech = (techId: string) => state.technologies.find(t => t.id === techId);
+  const getFactionRelationship = (factionId: string): RelationshipTier => {
+    const f = state.factions.find(x => x.id === factionId);
+    return deriveRelationship(f?.reputation ?? 0);
+  };
 
   const canAfford = (cost: Record<string, number>, elements: Element[], credits: number): boolean => {
     return Object.entries(cost).every(([id, amount]) => {
@@ -532,10 +551,33 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, [state]);
 
   const demolishBuilding = useCallback((buildingId: string) => {
-    setState(prev => ({
-      ...prev,
-      buildings: prev.buildings.map(b => b.id === buildingId ? { ...b, level: 0 } : b),
-    }));
+    setState(prev => {
+      const b = prev.buildings.find(x => x.id === buildingId);
+      if (!b || b.level === 0) return prev;
+      const lvl = b.level;
+      // Phase 2 — fully reverse the per-level stat bonuses that construct &
+      // upgrade granted, floored at the original baseline so demolishing can
+      // never bring a stat below the starting value.
+      let storageCapacity = prev.storageCapacity;
+      let maxPopulation = prev.maxPopulation;
+      let defensePower = prev.defensePower;
+      if (buildingId === 'storage_basic') {
+        storageCapacity = Math.max(initialState.storageCapacity, storageCapacity - 500 * lvl);
+      }
+      if (buildingId === 'habitat_basic') {
+        maxPopulation = Math.max(initialState.maxPopulation, maxPopulation - 20 * lvl);
+      }
+      if (buildingId === 'defense_basic') {
+        defensePower = Math.max(initialState.defensePower, defensePower - 25 * lvl);
+      }
+      return {
+        ...prev,
+        buildings: prev.buildings.map(x => x.id === buildingId ? { ...x, level: 0 } : x),
+        storageCapacity,
+        maxPopulation,
+        defensePower,
+      };
+    });
   }, []);
 
   const startResearch = useCallback((techId: string) => {
@@ -648,7 +690,19 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     // Plasma Weapons (×1.4) actively boosts player combat power.
     const rawPower = state.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + state.defensePower;
     const playerPower = rawPower * state.combatMultiplier;
-    const enemyPower = 50 + (faction?.reputation ?? 0) * -0.5;
+
+    // Phase 2 — enemy power now scales with the player's progression rather
+    // than perversely getting *weaker* as reputation rises. Floor of 50 keeps
+    // combat meaningful from turn one; era + prestige carry the difficulty
+    // curve; |reputation| means both hostile *and* allied factions field a
+    // serious force. Personality is a flavor modifier.
+    const eraScale = (state.era - 1) * 40;
+    const prestigeScale = state.prestigeLevel * 30;
+    const repFactor = Math.abs(faction?.reputation ?? 0) * 0.25;
+    const personalityMod = faction?.personality === 'militaristic'
+      ? 25
+      : faction?.personality === 'merchant' ? -10 : 0;
+    const enemyPower = Math.max(50, 50 + eraScale + prestigeScale + repFactor + personalityMod);
 
     let outcome: 'win' | 'loss' | 'draw' = 'draw';
     let details = '';
@@ -907,6 +961,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       getElementQuantity,
       getBuilding,
       getTech,
+      getFactionRelationship,
       generateEvent,
       generatingEvent,
     }}>

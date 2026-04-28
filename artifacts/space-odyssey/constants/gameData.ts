@@ -56,6 +56,8 @@ export interface EventChoice {
   reputationChange?: number;
 }
 
+export type RelationshipTier = 'hostile' | 'neutral' | 'friendly' | 'allied';
+
 export interface Faction {
   id: string;
   name: string;
@@ -63,7 +65,13 @@ export interface Faction {
   personality: 'militaristic' | 'scientific' | 'merchant' | 'neutral';
   reputation: number;
   discovered: boolean;
-  relationship: 'hostile' | 'neutral' | 'friendly' | 'allied';
+  /**
+   * @deprecated Phase 2 — relationship is now derived from `reputation` on every
+   * read via `deriveRelationship(rep)` / `getFactionRelationship(id)` on the
+   * GameContext. Kept optional only for backward-compatibility with old saves;
+   * no consumer should read this directly.
+   */
+  relationship?: RelationshipTier;
 }
 
 export interface Achievement {
@@ -120,10 +128,12 @@ export const INITIAL_TECHNOLOGIES: Technology[] = [
   { id: 'synthetic_elements', name: 'Synthetic Elements', era: 3, description: 'Create artificial elements.', effect: 'Unlocks legendary elements', cost: { Au: 50, Pt: 30, U: 20 }, prerequisites: ['quantum_research', 'advanced_mining'], researched: false, researchTime: 360, category: 'research' },
 ];
 
+// NOTE: `relationship` intentionally omitted — it's derived from reputation at
+// read time via `deriveRelationship` / `getFactionRelationship`.
 export const INITIAL_FACTIONS: Faction[] = [
-  { id: 'zorathi', name: 'Zorathi Collective', description: 'Hive-mind scientists obsessed with data collection.', personality: 'scientific', reputation: 0, discovered: false, relationship: 'neutral' },
-  { id: 'krenn', name: 'Krenn Empire', description: 'Militaristic warriors who respect strength.', personality: 'militaristic', reputation: 0, discovered: false, relationship: 'hostile' },
-  { id: 'vael', name: 'Vael Merchants', description: 'Interstellar traders always seeking profit.', personality: 'merchant', reputation: 10, discovered: false, relationship: 'neutral' },
+  { id: 'zorathi', name: 'Zorathi Collective', description: 'Hive-mind scientists obsessed with data collection.', personality: 'scientific', reputation: 0, discovered: false },
+  { id: 'krenn', name: 'Krenn Empire', description: 'Militaristic warriors who respect strength.', personality: 'militaristic', reputation: 0, discovered: false },
+  { id: 'vael', name: 'Vael Merchants', description: 'Interstellar traders always seeking profit.', personality: 'merchant', reputation: 10, discovered: false },
 ];
 
 export const INITIAL_ACHIEVEMENTS: Achievement[] = [
@@ -139,16 +149,43 @@ export const INITIAL_ACHIEVEMENTS: Achievement[] = [
   { id: 'elements_50', name: 'Grand Codex', description: 'Discover all elements.', rarity: 'legendary', unlocked: false, progress: 0, target: 16, reward: 1000 },
 ];
 
-export const PLANET_ZONES = [
+export interface PlanetZone {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  elements: string[];
+  baseYield: number;
+  unlocked: boolean;
+  lastMined: number;
+  /** Optional UI hint surfaced in the zone detail panel. */
+  hint?: string;
+}
+
+export const PLANET_ZONES: PlanetZone[] = [
   { id: 'zone_1', name: 'Northern Tundra', x: 20, y: 15, elements: ['H', 'Fe', 'Si'], baseYield: 10, unlocked: true, lastMined: 0 },
   { id: 'zone_2', name: 'Equatorial Rift', x: 60, y: 35, elements: ['Fe', 'C', 'Ti'], baseYield: 15, unlocked: true, lastMined: 0 },
-  { id: 'zone_3', name: 'Crystal Caves', x: 35, y: 55, elements: ['Si', 'Cu', 'Li'], baseYield: 12, unlocked: true, lastMined: 0 },
+  { id: 'zone_3', name: 'Crystal Caves', x: 35, y: 55, elements: ['Si', 'Cu', 'Li'], baseYield: 12, unlocked: true, lastMined: 0, hint: 'Source of Copper (Cu) — required for early-game tech.' },
   { id: 'zone_4', name: 'Volcanic Rim', x: 75, y: 70, elements: ['Fe', 'U', 'Ag'], baseYield: 20, unlocked: false, lastMined: 0 },
   { id: 'zone_5', name: 'Deep Ocean Trench', x: 15, y: 75, elements: ['O', 'He', 'Ag'], baseYield: 18, unlocked: false, lastMined: 0 },
   { id: 'zone_6', name: 'Ancient Ruins', x: 50, y: 20, elements: ['Au', 'Pt', 'C'], baseYield: 25, unlocked: false, lastMined: 0 },
   { id: 'zone_7', name: 'Quantum Anomaly', x: 80, y: 40, elements: ['Xr7', 'Pu', 'U'], baseYield: 40, unlocked: false, lastMined: 0 },
   { id: 'zone_8', name: 'Core Fragment', x: 45, y: 85, elements: ['Nv', 'Pt', 'Au'], baseYield: 35, unlocked: false, lastMined: 0 },
 ];
+
+/**
+ * Phase 2 — derive a faction's relationship label purely from its current
+ * reputation value. Single source of truth so UI never drifts from state.
+ *
+ * Thresholds chosen so neutral covers ±25 (the early game), friendly opens at
+ * 25, allied at 75, and hostile begins below -25.
+ */
+export function deriveRelationship(reputation: number): RelationshipTier {
+  if (reputation >= 75) return 'allied';
+  if (reputation >= 25) return 'friendly';
+  if (reputation <= -25) return 'hostile';
+  return 'neutral';
+}
 
 export const NARRATIVE_EVENTS: GameEvent[] = [
   {

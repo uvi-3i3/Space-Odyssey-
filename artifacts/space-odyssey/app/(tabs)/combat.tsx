@@ -33,7 +33,7 @@ const UNIT_ICONS: Record<string, string> = {
 };
 
 export default function CombatScreen() {
-  const { state, engageCombat, runEspionage, recruitUnits, getElementQuantity } = useGame();
+  const { state, engageCombat, runEspionage, recruitUnits, getElementQuantity, getFactionRelationship } = useGame();
   const colors = useColors();
   const [tab, setTab] = useState<'combat' | 'espionage' | 'fleet'>('combat');
   const [selectedFaction, setSelectedFaction] = useState<string | null>(null);
@@ -113,7 +113,8 @@ export default function CombatScreen() {
               </View>
             ) : (
               discoveredFactions.map(faction => {
-                const relColor = getRelationshipColor(faction.relationship);
+                const relationship = getFactionRelationship(faction.id);
+                const relColor = getRelationshipColor(relationship);
                 const isSelected = selectedFaction === faction.id;
                 const reputationProgress = (faction.reputation + 100) / 200;
 
@@ -135,7 +136,7 @@ export default function CombatScreen() {
                         <Text style={[styles.factionDesc, { color: colors.mutedForeground }]}>{faction.description}</Text>
                       </View>
                       <View style={[styles.relBadge, { borderColor: relColor, backgroundColor: relColor + '22' }]}>
-                        <Text style={[styles.relText, { color: relColor }]}>{faction.relationship.toUpperCase()}</Text>
+                        <Text style={[styles.relText, { color: relColor }]}>{relationship.toUpperCase()}</Text>
                       </View>
                     </View>
 
