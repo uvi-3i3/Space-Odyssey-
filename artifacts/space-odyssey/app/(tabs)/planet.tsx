@@ -12,21 +12,6 @@ import { BlueprintGrid } from '@/components/BlueprintGrid';
 import { RarityBadge } from '@/components/RarityBadge';
 import { PLANET_ZONES } from '@/constants/gameData';
 
-const PLANET_IMAGES: Record<string, any> = {
-  TERRAN: require('@/assets/planets/TERRAN.png'),
-  DESERT: require('@/assets/planets/DESERT.png'),
-  ICEWORLD: require('@/assets/planets/ICEWORLD.png'),
-  VOLCANIC: require('@/assets/planets/VOLCANIC.png'),
-  GAS_GIANT: require('@/assets/planets/GAS_GIANT.png'),
-  TOXIC: require('@/assets/planets/TOXIC.png'),
-  CRYSTALLINE: require('@/assets/planets/CRYSTALLINE.png'),
-  OCEANIC: require('@/assets/planets/OCEANIC.png'),
-  METALLIC: require('@/assets/planets/METALLIC.png'),
-  VOID: require('@/assets/planets/VOID.png'),
-  BARREN: require('@/assets/planets/BARREN.png'),
-  ALIEN: require('@/assets/planets/ALIEN.png'),
-};
-
 const { width } = Dimensions.get('window');
 
 type MiningType = 'safe' | 'aggressive' | 'deep';
