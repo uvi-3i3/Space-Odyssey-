@@ -5,6 +5,8 @@ import {
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { SvgUri } from 'react-native-svg';
+import { Asset } from 'expo-asset';
 import { useGame } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
@@ -18,6 +20,23 @@ import { Shimmer } from '@/components/Shimmer';
 import { PLANET_ZONES } from '@/constants/gameData';
 
 const { width } = Dimensions.get('window');
+
+const PLANET_IMAGES: Record<string, any> = {
+  TERRAN: require('@/assets/planets/TERRAN.svg'),
+  DESERT: require('@/assets/planets/DESERT.svg'),
+  ICEWORLD: require('@/assets/planets/ICEWORLD.svg'),
+  VOLCANIC: require('@/assets/planets/VOLCANIC.svg'),
+  GAS_GIANT: require('@/assets/planets/GAS_GIANT.svg'),
+  TOXIC: require('@/assets/planets/TOXIC.svg'),
+  CRYSTALLINE: require('@/assets/planets/CRYSTALLINE.svg'),
+  OCEANIC: require('@/assets/planets/OCEANIC.svg'),
+  METALLIC: require('@/assets/planets/TERRAN.svg'),
+  VOID: require('@/assets/planets/TERRAN.svg'),
+  BARREN: require('@/assets/planets/DESERT.svg'),
+  ALIEN: require('@/assets/planets/TOXIC.svg'),
+};
+
+const PLANET_VISUAL_SIZE = 220;
 
 type MiningType = 'safe' | 'aggressive' | 'deep';
 
@@ -166,13 +185,24 @@ export default function PlanetScreen() {
               );
             })}
 
-            <View style={[styles.planetCore, { borderColor: colors.primary }]} pointerEvents="none">
-              <RotatingPlanet duration={48_000}>
-                <View style={[styles.planetCoreInner, { backgroundColor: colors.primary + '22', borderColor: colors.primary }]}>
-                  <Feather name="globe" size={16} color={colors.primary} />
+            {(() => {
+              const planetType = state.planetType ?? 'TERRAN';
+              const planetAsset = PLANET_IMAGES[planetType] ?? PLANET_IMAGES.TERRAN;
+              const planetUri = Asset.fromModule(planetAsset).uri;
+              return (
+                <View style={styles.planetCore} pointerEvents="none">
+                  <RotatingPlanet duration={48_000}>
+                    {planetUri ? (
+                      <SvgUri width={PLANET_VISUAL_SIZE} height={PLANET_VISUAL_SIZE} uri={planetUri} />
+                    ) : (
+                      <View style={[styles.planetCoreFallback, { backgroundColor: colors.primary + '22', borderColor: colors.primary }]}>
+                        <Feather name="globe" size={20} color={colors.primary} />
+                      </View>
+                    )}
+                  </RotatingPlanet>
                 </View>
-              </RotatingPlanet>
-            </View>
+              );
+            })()}
           </View>
 
           <View style={styles.legendRow}>
@@ -392,7 +422,7 @@ const styles = StyleSheet.create({
   mapHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   mapLabel: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1.5 },
   mapCoords: { fontSize: 9, fontFamily: 'SpaceMono_400Regular' },
-  mapArea: { height: 190, position: 'relative', overflow: 'hidden' },
+  mapArea: { height: 280, position: 'relative', overflow: 'hidden' },
 
   zoneNode: {
     position: 'absolute',
@@ -404,6 +434,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: -15,
     marginTop: -15,
+    zIndex: 2,
   },
   pulseHost: {
     position: 'absolute',
@@ -418,12 +449,13 @@ const styles = StyleSheet.create({
 
   planetCore: {
     position: 'absolute', left: '50%', top: '50%',
-    width: 44, height: 44, marginLeft: -22, marginTop: -22,
-    borderRadius: 22, borderWidth: 1,
+    width: PLANET_VISUAL_SIZE, height: PLANET_VISUAL_SIZE,
+    marginLeft: -PLANET_VISUAL_SIZE / 2, marginTop: -PLANET_VISUAL_SIZE / 2,
     alignItems: 'center', justifyContent: 'center',
+    zIndex: 1,
   },
-  planetCoreInner: {
-    width: 36, height: 36, borderRadius: 18, borderWidth: 1,
+  planetCoreFallback: {
+    width: 44, height: 44, borderRadius: 22, borderWidth: 1,
     alignItems: 'center', justifyContent: 'center',
   },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
