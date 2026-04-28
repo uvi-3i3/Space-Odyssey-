@@ -19,13 +19,16 @@
  * ----------
  *   pnpm --filter @workspace/scripts run generate:story
  *
- * REQUIRED ENVIRONMENT VARIABLES (one of these two pairs)
+ * REQUIRED ENVIRONMENT VARIABLES (any one of these — checked in this order)
+ *   - GEMINI_API_KEY  (Google Gemini key; uses Gemini's OpenAI-compatible
+ *     endpoint so the rest of the script is identical)
  *   - AI_INTEGRATIONS_OPENAI_BASE_URL  +  AI_INTEGRATIONS_OPENAI_API_KEY
  *     (set automatically when the Replit OpenAI integration is provisioned)
  *   - OPENAI_API_KEY  (plain OpenAI account key; baseURL defaults to api.openai.com)
  *
  * OPTIONAL ENVIRONMENT VARIABLES
- *   - STORY_GEN_MODEL    Defaults to "gpt-5-mini". Try "gpt-4o-mini" if needed.
+ *   - STORY_GEN_MODEL    Defaults depend on provider: "gemini-2.5-flash" for
+ *                        Gemini, "gpt-5-mini" for OpenAI. Override to taste.
  *   - STORY_GEN_FORCE    Set to "1" to ignore the chapter cache and regenerate
  *                        every chapter from scratch.
  *
@@ -55,26 +58,67 @@ const OUTPUT_PATH = join(
 const CACHE_DIR = join(REPO_ROOT, 'scripts', '.cache', 'storytree');
 
 // ---------------------------------------------------------------------------
-// Credentials — prefer the Replit OpenAI integration, fall back to a raw key.
+// Credentials — try providers in priority order:
+//   1. GEMINI_API_KEY                                (Google Gemini)
+//   2. AI_INTEGRATIONS_OPENAI_*                      (Replit OpenAI integration)
+//   3. OPENAI_API_KEY                                (plain OpenAI key)
+// Gemini exposes an OpenAI-compatible REST surface, so the openai SDK is
+// reused as-is by just pointing baseURL at Google's compat endpoint.
 // ---------------------------------------------------------------------------
-const baseURL =
-  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const apiKey =
-  process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+type Provider = 'gemini' | 'openai';
 
-if (!apiKey) {
+interface ProviderConfig {
+  provider: Provider;
+  apiKey: string;
+  baseURL: string;
+  defaultModel: string;
+  label: string;
+}
+
+function pickProvider(): ProviderConfig {
+  if (process.env.GEMINI_API_KEY) {
+    return {
+      provider: 'gemini',
+      apiKey: process.env.GEMINI_API_KEY,
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      defaultModel: 'gemini-2.5-flash',
+      label: 'Google Gemini (OpenAI-compatible endpoint)',
+    };
+  }
+  if (
+    process.env.AI_INTEGRATIONS_OPENAI_BASE_URL &&
+    process.env.AI_INTEGRATIONS_OPENAI_API_KEY
+  ) {
+    return {
+      provider: 'openai',
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      defaultModel: 'gpt-5-mini',
+      label: 'Replit OpenAI integration',
+    };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return {
+      provider: 'openai',
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: 'https://api.openai.com/v1',
+      defaultModel: 'gpt-5-mini',
+      label: 'OpenAI direct (OPENAI_API_KEY)',
+    };
+  }
   console.error(
-    '\n[story-gen] Missing OpenAI credentials.\n' +
-      '            Set AI_INTEGRATIONS_OPENAI_API_KEY (Replit OpenAI integration)\n' +
-      '            or OPENAI_API_KEY (plain OpenAI account key) and re-run.\n',
+    '\n[story-gen] No usable AI credentials found.\n' +
+      '            Set GEMINI_API_KEY, OPENAI_API_KEY, or the Replit OpenAI\n' +
+      '            integration env vars and re-run.\n',
   );
   process.exit(1);
 }
 
-const MODEL = process.env.STORY_GEN_MODEL || 'gpt-5-mini';
+const PROVIDER = pickProvider();
+const MODEL = process.env.STORY_GEN_MODEL || PROVIDER.defaultModel;
 const FORCE = process.env.STORY_GEN_FORCE === '1';
 
-const openai = new OpenAI({ apiKey, baseURL });
+const openai = new OpenAI({ apiKey: PROVIDER.apiKey, baseURL: PROVIDER.baseURL });
 
 // ---------------------------------------------------------------------------
 // Game vocabulary — kept in sync by hand with constants/gameData.ts.
@@ -751,7 +795,8 @@ export interface StoryTree {
 async function main() {
   console.log(`[story-gen] Output target: ${OUTPUT_PATH}`);
   console.log(`[story-gen] Cache directory: ${CACHE_DIR}`);
-  console.log(`[story-gen] Model: ${MODEL}    Force regenerate: ${FORCE}`);
+  console.log(`[story-gen] Provider: ${PROVIDER.label}`);
+  console.log(`[story-gen] Model:    ${MODEL}    Force regenerate: ${FORCE}`);
 
   const chapters: RawChapter[] = [];
   for (const plan of CHAPTERS) {
