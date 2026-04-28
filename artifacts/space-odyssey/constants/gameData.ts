@@ -162,6 +162,55 @@ export interface PlanetZone {
   hint?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — Civilization Stability.
+// Stability is the core "health" metric (0-100). High stability boosts ALL
+// passive production; low stability penalises it. Helpers here are pure so
+// they can be imported by both the GameContext (state math) and the UI layer
+// (HUD colouring) without duplication.
+// ---------------------------------------------------------------------------
+
+export type StabilityTier = 'critical' | 'low' | 'medium' | 'high';
+
+export function getStabilityTier(stability: number): StabilityTier {
+  if (stability < 15) return 'critical';
+  if (stability < 40) return 'low';
+  if (stability < 70) return 'medium';
+  return 'high';
+}
+
+/** Returns the multiplier applied to ALL passive production each tick. */
+export function getStabilityProductionMultiplier(stability: number): number {
+  const t = getStabilityTier(stability);
+  if (t === 'high') return 1.2;
+  if (t === 'medium') return 1.0;
+  if (t === 'low') return 0.75;
+  return 0.5;
+}
+
+/** Stability cost charged to the player on every manual mine attempt. */
+export const STABILITY_HIT_BY_MINING: Record<'safe' | 'aggressive' | 'deep', number> = {
+  safe: 0,
+  aggressive: 3,
+  deep: 7,
+};
+
+/** Where stability passively heals back toward when nothing is hurting it. */
+export const STABILITY_BASELINE = 75;
+/** Per-tick (1s) drift toward STABILITY_BASELINE. ~2.4/min total. */
+export const STABILITY_REGEN_PER_TICK = 0.04;
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Auto-Miners.
+// Each owned Auto-Miner can be assigned to one unlocked zone and produces
+// 1 unit of one of that zone's elements every AUTO_MINER_INTERVAL_SEC.
+// ---------------------------------------------------------------------------
+
+/** Credit cost to purchase one new Auto-Miner. */
+export const AUTO_MINER_COST = 50;
+/** Seconds between yield events for a single Auto-Miner (before stability mod). */
+export const AUTO_MINER_INTERVAL_SEC = 5;
+
 export const PLANET_ZONES: PlanetZone[] = [
   { id: 'zone_1', name: 'Northern Tundra', x: 20, y: 15, elements: ['H', 'Fe', 'Si'], baseYield: 10, unlocked: true, lastMined: 0 },
   { id: 'zone_2', name: 'Equatorial Rift', x: 60, y: 35, elements: ['Fe', 'C', 'Ti'], baseYield: 15, unlocked: true, lastMined: 0 },

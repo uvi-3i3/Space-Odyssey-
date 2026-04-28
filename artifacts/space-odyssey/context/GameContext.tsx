@@ -5,6 +5,9 @@ import {
   PlanetZone, RelationshipTier, deriveRelationship,
   INITIAL_ELEMENTS, INITIAL_BUILDINGS, INITIAL_TECHNOLOGIES,
   INITIAL_FACTIONS, INITIAL_ACHIEVEMENTS, PLANET_ZONES, NARRATIVE_EVENTS,
+  StabilityTier, getStabilityTier, getStabilityProductionMultiplier,
+  STABILITY_HIT_BY_MINING, STABILITY_BASELINE, STABILITY_REGEN_PER_TICK,
+  AUTO_MINER_COST, AUTO_MINER_INTERVAL_SEC,
 } from '@/constants/gameData';
 
 const STORAGE_KEY = '@space_odyssey_save';
@@ -43,6 +46,19 @@ export interface GameState {
   units: FleetUnit[];
   storageCapacity: number;
   activeTab: string;
+  /** Phase 4 — civilization stability (0-100). Drives production multiplier. */
+  stability: number;
+  /** Phase 4 — total Auto-Miners the player owns (deployed + idle). */
+  autoMinersOwned: number;
+  /** Phase 4 — Auto-Miners deployed per zone. Sum cannot exceed autoMinersOwned. */
+  autoMinersAssigned: Record<string, number>;
+  /**
+   * Phase 4 — wallclock-style accumulator: each Auto-Miner's tick fraction is
+   * added here per second. When the per-zone bucket crosses 1.0, one yield
+   * fires and the bucket subtracts 1. Persisted so deploys/refreshes don't
+   * reset progress mid-cycle.
+   */
+  autoMinerProgress: Record<string, number>;
 }
 
 export interface CombatEntry {
@@ -132,6 +148,15 @@ const initialState: GameState = {
   // somewhere to go before the player can build/upgrade an Element Vault.
   storageCapacity: 2000,
   activeTab: 'planet',
+  // Phase 4 — start at full stability so the player feels safe before they
+  // begin choosing risky mining protocols.
+  stability: 100,
+  // Phase 4 — give the player one Auto-Miner already deployed on Zone 1 as a
+  // tutorial. They watch passive yield trickle in immediately, learning the
+  // "managed setup" loop before they ever tap-to-mine.
+  autoMinersOwned: 1,
+  autoMinersAssigned: { zone_1: 1 },
+  autoMinerProgress: { zone_1: 0 },
 };
 
 // ---------------------------------------------------------------------------
@@ -246,6 +271,85 @@ function applyProgression(s: GameState): GameState {
   return next;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — Stability + Auto-Miner pure helpers.
+// These are tick-loop primitives. Each takes (state, optional seconds) and
+// returns a new state; never mutates. Composed inside the tick callback and
+// inside applyOfflineProgress so passive systems behave identically online
+// and offline.
+// ---------------------------------------------------------------------------
+
+const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+/** Drift stability gently back toward the baseline when nothing is hurting it. */
+function applyStabilityRegen(s: GameState, seconds: number): GameState {
+  if (seconds <= 0) return s;
+  const delta = STABILITY_REGEN_PER_TICK * seconds;
+  // Move toward baseline from either direction; never overshoot.
+  let next = s.stability;
+  if (next < STABILITY_BASELINE) {
+    next = Math.min(STABILITY_BASELINE, next + delta);
+  } else if (next > STABILITY_BASELINE) {
+    next = Math.max(STABILITY_BASELINE, next - delta * 0.5);
+  } else {
+    return s;
+  }
+  if (next === s.stability) return s;
+  return { ...s, stability: next };
+}
+
+/**
+ * Apply Auto-Miner production for `seconds` seconds. Each Auto-Miner generates
+ * 1 unit / AUTO_MINER_INTERVAL_SEC, multiplied by stability + tech mining
+ * multipliers. Yield rotates through the zone's elements so all of them grow
+ * roughly evenly (not just the first one). Storage cap is enforced per element.
+ *
+ * Uses `autoMinerProgress` as a fractional accumulator so we don't lose yield
+ * when seconds < AUTO_MINER_INTERVAL_SEC (the normal 1s tick case).
+ */
+function applyAutoMinerProduction(s: GameState, seconds: number): GameState {
+  if (seconds <= 0) return s;
+  const stabMult = getStabilityProductionMultiplier(s.stability);
+  const prestigeMult = 1 + s.prestigeLevel * 0.1;
+  // unitsPerSec for ONE auto-miner, before zone-count multiplication
+  const unitsPerSec = (1 / AUTO_MINER_INTERVAL_SEC) * stabMult * s.miningMultiplier * prestigeMult;
+
+  const elems = [...s.elements];
+  const progress: Record<string, number> = { ...s.autoMinerProgress };
+  let changed = false;
+
+  for (const zone of s.planetZones) {
+    const count = s.autoMinersAssigned[zone.id] ?? 0;
+    if (count <= 0 || !zone.unlocked) continue;
+
+    const accrued = (progress[zone.id] ?? 0) + unitsPerSec * count * seconds;
+    const yieldUnits = Math.floor(accrued);
+    progress[zone.id] = accrued - yieldUnits;
+    if (yieldUnits <= 0) continue;
+
+    // Distribute the yield round-robin across the zone's element list so a
+    // 3-element zone with 6 yield grants +2 of each, not +6 of the first one.
+    for (let i = 0; i < yieldUnits; i++) {
+      const elemId = zone.elements[i % zone.elements.length];
+      const idx = elems.findIndex(e => e.id === elemId);
+      if (idx < 0) continue;
+      const newQty = Math.min(elems[idx].quantity + 1, s.storageCapacity);
+      if (newQty !== elems[idx].quantity) {
+        elems[idx] = { ...elems[idx], quantity: newQty, discovered: true };
+        changed = true;
+      }
+    }
+  }
+
+  if (!changed && progress === s.autoMinerProgress) return s;
+  return { ...s, elements: elems, autoMinerProgress: progress };
+}
+
+/** How many Auto-Miners are currently deployed across all zones. */
+function deployedAutoMinerCount(s: GameState): number {
+  return Object.values(s.autoMinersAssigned).reduce((a, b) => a + (b || 0), 0);
+}
+
 interface GameContextType {
   state: GameState;
   mineZone: (zoneId: string, miningType: 'safe' | 'aggressive' | 'deep') => { success: boolean; rewards: Record<string, number>; message: string };
@@ -269,6 +373,17 @@ interface GameContextType {
   /** Phase 3 — most recent save/load error, or null. UI surfaces via banner. */
   lastError: string | null;
   clearError: () => void;
+  // Phase 4 — Stability + Auto-Miner public API.
+  /** Buys one Auto-Miner using credits. Doesn't auto-deploy. */
+  buyAutoMiner: () => { success: boolean; message: string };
+  /** Deploys one idle Auto-Miner to the given unlocked zone. */
+  assignAutoMiner: (zoneId: string) => { success: boolean; message: string };
+  /** Recalls one Auto-Miner from the given zone back into the idle pool. */
+  unassignAutoMiner: (zoneId: string) => { success: boolean; message: string };
+  /** Total Auto-Miners currently deployed across all zones (derived). */
+  deployedAutoMiners: number;
+  /** Stability tier ('high' | 'medium' | 'low' | 'critical') — derived live. */
+  stabilityTier: StabilityTier;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -301,6 +416,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         if (!parsed.eventLog) parsed.eventLog = [];
         if (parsed.combatMultiplier == null) parsed.combatMultiplier = 1.0;
         if (parsed.buildingCostMultiplier == null) parsed.buildingCostMultiplier = 1.0;
+        // Phase 4 — back-compat defaults so older saves load cleanly. New
+        // players start at full stability with one tutorial Auto-Miner.
+        if (parsed.stability == null) parsed.stability = 100;
+        if (parsed.autoMinersOwned == null) parsed.autoMinersOwned = 1;
+        if (parsed.autoMinersAssigned == null) parsed.autoMinersAssigned = { zone_1: 1 };
+        if (parsed.autoMinerProgress == null) parsed.autoMinerProgress = {};
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
         let loaded = applyOfflineProgress(parsed, cappedTime);
@@ -327,14 +448,17 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   };
 
   const applyOfflineProgress = (s: GameState, seconds: number): GameState => {
-    const updated = { ...s };
+    let updated: GameState = { ...s };
+    const stabMult = getStabilityProductionMultiplier(updated.stability);
     const mineBuildings = s.buildings.filter(b => b.type === 'mine' && b.level > 0);
     const mineMultiplier = 1 + (s.prestigeLevel * 0.1);
     const elems = [...s.elements];
     for (const building of mineBuildings) {
-      // Phase 2 — also honour the tech-driven mining multiplier offline so
+      // Phase 2 — honour the tech-driven mining multiplier offline so
       // researched techs feel real after coming back from a session.
-      const rate = building.productionRate * building.level * mineMultiplier * s.miningMultiplier;
+      // Phase 4 — also honour the stability production multiplier so a
+      // crashed civilization actually loses production while you're away.
+      const rate = building.productionRate * building.level * mineMultiplier * s.miningMultiplier * stabMult;
       const totalGained = Math.floor(rate * seconds / 60);
       if (totalGained > 0) {
         const zone = PLANET_ZONES[0];
@@ -352,6 +476,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }
     updated.elements = elems;
     updated.credits = Math.min(updated.credits + Math.floor(seconds * 0.5), 999999);
+    // Phase 4 — Auto-Miners produce while you're away too. Stability also
+    // drifts back toward the baseline. Both routed through the same pure
+    // helpers used inside the live tick so behaviour is identical.
+    updated = applyStabilityRegen(updated, seconds);
+    updated = applyAutoMinerProduction(updated, seconds);
     return updated;
   };
 
@@ -368,12 +497,16 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const tick = useCallback(() => {
     setState(prev => {
-      const updated = { ...prev };
+      let updated: GameState = { ...prev };
+      // Phase 4 — stability multiplier scales BOTH mine buildings AND every
+      // auto-miner. Computed once per tick off the start-of-tick stability
+      // value (regen is applied at the end of the tick, deliberately).
+      const stabMult = getStabilityProductionMultiplier(prev.stability);
       const mineBuildings = prev.buildings.filter(b => b.type === 'mine' && b.level > 0);
       const mineMultiplier = 1 + (prev.prestigeLevel * 0.1);
       const elems = [...prev.elements];
       for (const building of mineBuildings) {
-        const rate = building.productionRate * building.level * mineMultiplier * prev.miningMultiplier;
+        const rate = building.productionRate * building.level * mineMultiplier * prev.miningMultiplier * stabMult;
         if (Math.random() < rate / 60) {
           const zone = PLANET_ZONES[0];
           for (const elemId of zone.elements) {
@@ -419,7 +552,15 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
       // When research finishes mid-tick, recompute all tech-driven derived
       // stats, zone unlocks, era advancement, and faction discovery in one pass.
-      return researchCompleted ? applyProgression(updated) : updated;
+      if (researchCompleted) {
+        updated = applyProgression(updated);
+      }
+      // Phase 4 — Auto-Miner production runs every tick (1s of game time).
+      // Stability regen ALSO runs every tick (drift toward baseline). Both
+      // helpers are pure and capacity-aware.
+      updated = applyAutoMinerProduction(updated, 1);
+      updated = applyStabilityRegen(updated, 1);
+      return updated;
     });
   }, []);
 
@@ -487,12 +628,26 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const riskMap = { safe: 0, aggressive: 0.25, deep: 0.5 };
       const multiplierMap = { safe: 1, aggressive: 2.5, deep: 5 };
       const risk = riskMap[miningType];
-      const mult = multiplierMap[miningType] * prev.miningMultiplier * (1 + prev.prestigeLevel * 0.1);
+      // Phase 4 — stability boosts/penalises manual yield in addition to the
+      // existing tech + prestige multipliers. Spamming Aggressive while in
+      // the LOW tier means you mine half as much AND lose more stability.
+      const stabMult = getStabilityProductionMultiplier(prev.stability);
+      const mult = multiplierMap[miningType] * prev.miningMultiplier * (1 + prev.prestigeLevel * 0.1) * stabMult;
+
+      // Phase 4 — stability cost charged regardless of success: the dangerous
+      // protocol was used, the empire bears the cost either way. Clamped 0-100.
+      const stabilityHit = STABILITY_HIT_BY_MINING[miningType];
+      const newStability = clamp(prev.stability - stabilityHit, 0, 100);
+      const stabSuffix = stabilityHit > 0 ? ` (-${stabilityHit} stability)` : '';
 
       if (Math.random() < risk) {
-        result = { success: false, rewards: {}, message: miningType === 'deep' ? 'Cave collapse! Nothing recovered.' : 'Mining accident! No yield.' };
+        const failMsg = miningType === 'deep'
+          ? 'Cave collapse! Nothing recovered.'
+          : 'Mining accident! No yield.';
+        result = { success: false, rewards: {}, message: failMsg + stabSuffix };
         return {
           ...prev,
+          stability: newStability,
           planetZones: prev.planetZones.map(z => z.id === zoneId ? { ...z, lastMined: now } : z),
         };
       }
@@ -521,8 +676,64 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const zones = prev.planetZones.map(z => z.id === zoneId ? { ...z, lastMined: now } : z);
       const updatedAchievements = checkAchievements(prev.achievements, elems, prev.buildings, prev.technologies);
 
-      result = { success: true, rewards, message: 'Mined successfully!' };
-      return { ...prev, elements: elems, planetZones: zones, achievements: updatedAchievements };
+      result = { success: true, rewards, message: 'Mined successfully!' + stabSuffix };
+      return { ...prev, stability: newStability, elements: elems, planetZones: zones, achievements: updatedAchievements };
+    });
+    return result;
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Phase 4 — Auto-Miner actions.
+  // Buy: spend credits, increase the owned pool. Doesn't auto-deploy — the
+  // player decides where to put it. Assign/unassign just shuffles the pool
+  // between deployed and idle.
+  // -------------------------------------------------------------------------
+
+  const buyAutoMiner = useCallback(() => {
+    let result: { success: boolean; message: string } = { success: false, message: 'Could not buy Auto-Miner' };
+    setState(prev => {
+      if (prev.credits < AUTO_MINER_COST) {
+        result = { success: false, message: `Need ${AUTO_MINER_COST} credits` };
+        return prev;
+      }
+      result = { success: true, message: `Auto-Miner purchased — ${prev.autoMinersOwned + 1} owned` };
+      return { ...prev, credits: prev.credits - AUTO_MINER_COST, autoMinersOwned: prev.autoMinersOwned + 1 };
+    });
+    return result;
+  }, []);
+
+  const assignAutoMiner = useCallback((zoneId: string) => {
+    let result: { success: boolean; message: string } = { success: false, message: 'Cannot deploy here' };
+    setState(prev => {
+      const zone = prev.planetZones.find(z => z.id === zoneId);
+      if (!zone || !zone.unlocked) {
+        result = { success: false, message: 'Zone not accessible' };
+        return prev;
+      }
+      const deployed = deployedAutoMinerCount(prev);
+      if (deployed >= prev.autoMinersOwned) {
+        result = { success: false, message: 'No idle Auto-Miners — buy or recall one' };
+        return prev;
+      }
+      const next = { ...prev.autoMinersAssigned, [zoneId]: (prev.autoMinersAssigned[zoneId] ?? 0) + 1 };
+      result = { success: true, message: 'Auto-Miner deployed' };
+      return { ...prev, autoMinersAssigned: next };
+    });
+    return result;
+  }, []);
+
+  const unassignAutoMiner = useCallback((zoneId: string) => {
+    let result: { success: boolean; message: string } = { success: false, message: 'No Auto-Miner deployed here' };
+    setState(prev => {
+      const here = prev.autoMinersAssigned[zoneId] ?? 0;
+      if (here <= 0) return prev;
+      const next = { ...prev.autoMinersAssigned, [zoneId]: here - 1 };
+      // Reset the per-zone fractional accumulator when fully recalled so the
+      // next deploy starts from zero rather than inheriting a stale fraction.
+      const nextProgress = { ...prev.autoMinerProgress };
+      if (next[zoneId] === 0) nextProgress[zoneId] = 0;
+      result = { success: true, message: 'Auto-Miner recalled' };
+      return { ...prev, autoMinersAssigned: next, autoMinerProgress: nextProgress };
     });
     return result;
   }, []);
@@ -1011,6 +1222,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(saveInterval);
   }, [saveGame]);
 
+  // Phase 4 — derived stability tier and deployed-miner count. Lives in the
+  // provider (not as a hook in consumers) so every screen reads the same
+  // values from the same source of truth.
+  const stabilityTier = getStabilityTier(state.stability);
+  const deployedAutoMiners = deployedAutoMinerCount(state);
+
   return (
     <GameContext.Provider value={{
       state,
@@ -1033,6 +1250,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       generatingEvent,
       lastError,
       clearError,
+      buyAutoMiner,
+      assignAutoMiner,
+      unassignAutoMiner,
+      deployedAutoMiners,
+      stabilityTier,
     }}>
       {children}
     </GameContext.Provider>

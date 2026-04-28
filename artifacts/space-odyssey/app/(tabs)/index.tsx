@@ -15,7 +15,7 @@ import { FadeSlideIn } from '@/components/FadeSlideIn';
 import { PressableScale } from '@/components/PressableScale';
 import { GlowPulse } from '@/components/GlowPulse';
 import { Shimmer } from '@/components/Shimmer';
-import { PLANET_ZONES } from '@/constants/gameData';
+import { PLANET_ZONES, AUTO_MINER_COST } from '@/constants/gameData';
 
 const { width } = Dimensions.get('window');
 
@@ -38,11 +38,21 @@ function getRarityColor(rarity: string, colors: any) {
 }
 
 export default function PlanetScreen() {
-  const { state, mineZone } = useGame();
+  const { state, mineZone, buyAutoMiner, assignAutoMiner, unassignAutoMiner, deployedAutoMiners } = useGame();
   const colors = useColors();
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [miningType, setMiningType] = useState<MiningType>('safe');
   const [result, setResult] = useState<{ success: boolean; message: string; rewards?: Record<string, number> } | null>(null);
+  // Phase 4 — short-lived toast for Auto-Miner buy/assign feedback so the
+  // player sees confirmation/errors without a modal.
+  const [autoMinerToast, setAutoMinerToast] = useState<{ ok: boolean; msg: string } | null>(null);
+  const idleAutoMiners = state.autoMinersOwned - deployedAutoMiners;
+  const assignedHere = selectedZone ? (state.autoMinersAssigned[selectedZone] ?? 0) : 0;
+
+  const flashAutoMinerToast = (ok: boolean, msg: string) => {
+    setAutoMinerToast({ ok, msg });
+    setTimeout(() => setAutoMinerToast(null), 2200);
+  };
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const bounceAnim = useRef(new Animated.Value(1)).current;
 
@@ -241,8 +251,99 @@ export default function PlanetScreen() {
               })}
             </View>
 
+            {/* Phase 4 — Auto-Miner control panel.
+                Players manage their idle pool from here: deploy, recall, buy.
+                Lives ABOVE Extraction Protocol so the "set up automation"
+                loop reads as the primary path; manual mining sits underneath. */}
+            <View style={styles.autoMinerSection}>
+              <View style={styles.autoMinerHeader}>
+                <Text style={[styles.panelSectionLabel, { color: colors.mutedForeground }]}>
+                  AUTO-MINERS
+                </Text>
+                <Text style={[styles.autoMinerPool, { color: colors.mutedForeground }]}>
+                  {idleAutoMiners} IDLE · {state.autoMinersOwned} OWNED
+                </Text>
+              </View>
+              <View style={[styles.autoMinerRow, { borderColor: colors.border, backgroundColor: colors.muted }]}>
+                <View style={styles.autoMinerCount}>
+                  <Feather name="cpu" size={14} color={colors.primary} />
+                  <Text style={[styles.autoMinerCountValue, { color: colors.foreground, fontFamily: 'SpaceMono_700Bold' }]}>
+                    ×{assignedHere}
+                  </Text>
+                  <Text style={[styles.autoMinerCountLabel, { color: colors.mutedForeground }]}>
+                    DEPLOYED HERE
+                  </Text>
+                </View>
+                <View style={styles.autoMinerControls}>
+                  <PressableScale
+                    style={[styles.autoMinerBtn, {
+                      borderColor: assignedHere > 0 ? colors.destructive : colors.border,
+                      opacity: assignedHere > 0 ? 1 : 0.4,
+                    }]}
+                    onPress={() => {
+                      if (assignedHere <= 0 || !selectedZone) return;
+                      const r = unassignAutoMiner(selectedZone);
+                      flashAutoMinerToast(r.success, r.message);
+                      Haptics.selectionAsync();
+                    }}
+                    disabled={assignedHere <= 0}
+                    scaleTo={0.9}
+                  >
+                    <Feather name="minus" size={14} color={assignedHere > 0 ? colors.destructive : colors.mutedForeground} />
+                  </PressableScale>
+                  <PressableScale
+                    style={[styles.autoMinerBtn, {
+                      borderColor: idleAutoMiners > 0 ? colors.secondary : colors.border,
+                      opacity: idleAutoMiners > 0 ? 1 : 0.4,
+                    }]}
+                    onPress={() => {
+                      if (idleAutoMiners <= 0 || !selectedZone) return;
+                      const r = assignAutoMiner(selectedZone);
+                      flashAutoMinerToast(r.success, r.message);
+                      Haptics.selectionAsync();
+                    }}
+                    disabled={idleAutoMiners <= 0}
+                    scaleTo={0.9}
+                  >
+                    <Feather name="plus" size={14} color={idleAutoMiners > 0 ? colors.secondary : colors.mutedForeground} />
+                  </PressableScale>
+                </View>
+              </View>
+              <PressableScale
+                style={[styles.autoMinerBuyBtn, {
+                  borderColor: state.credits >= AUTO_MINER_COST ? colors.primary : colors.border,
+                  backgroundColor: (state.credits >= AUTO_MINER_COST ? colors.primary : colors.border) + '12',
+                }]}
+                onPress={() => {
+                  const r = buyAutoMiner();
+                  flashAutoMinerToast(r.success, r.message);
+                  if (r.success) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }}
+                disabled={state.credits < AUTO_MINER_COST}
+                scaleTo={0.97}
+              >
+                <Feather
+                  name="shopping-cart"
+                  size={12}
+                  color={state.credits >= AUTO_MINER_COST ? colors.primary : colors.mutedForeground}
+                />
+                <Text style={[styles.autoMinerBuyText, {
+                  color: state.credits >= AUTO_MINER_COST ? colors.primary : colors.mutedForeground,
+                }]}>
+                  BUY AUTO-MINER · {AUTO_MINER_COST}cr
+                </Text>
+              </PressableScale>
+              {autoMinerToast && (
+                <Text style={[styles.autoMinerToast, {
+                  color: autoMinerToast.ok ? colors.secondary : colors.destructive,
+                }]}>
+                  {autoMinerToast.msg}
+                </Text>
+              )}
+            </View>
+
             <Text style={[styles.panelSectionLabel, { color: colors.mutedForeground, marginTop: 4 }]}>
-              EXTRACTION PROTOCOL
+              EXTRACTION PROTOCOL · MANUAL
             </Text>
             <View style={styles.miningRow}>
               {MINING_TYPES.map(mt => (
@@ -449,6 +550,28 @@ const styles = StyleSheet.create({
   elemPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 4, borderWidth: 1, borderRadius: 4 },
   elemPillSymbol: { fontSize: 13 },
   elemPillQty: { fontSize: 10 },
+
+  autoMinerSection: { gap: 6, marginTop: 4 },
+  autoMinerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  autoMinerPool: { fontSize: 9, fontFamily: 'SpaceMono_700Bold', letterSpacing: 0.5 },
+  autoMinerRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderRadius: 6,
+  },
+  autoMinerCount: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  autoMinerCountValue: { fontSize: 14 },
+  autoMinerCountLabel: { fontSize: 8, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  autoMinerControls: { flexDirection: 'row', gap: 6 },
+  autoMinerBtn: {
+    width: 30, height: 28, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderRadius: 4,
+  },
+  autoMinerBuyBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 8, borderWidth: 1, borderRadius: 5,
+  },
+  autoMinerBuyText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  autoMinerToast: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5, textAlign: 'center', marginTop: 2 },
 
   miningRow: { flexDirection: 'row', gap: 6 },
   miningBtn: {
