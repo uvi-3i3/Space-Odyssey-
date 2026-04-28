@@ -266,6 +266,9 @@ interface GameContextType {
   getFactionRelationship: (factionId: string) => RelationshipTier;
   generateEvent: () => void;
   generatingEvent: boolean;
+  /** Phase 3 — most recent save/load error, or null. UI surfaces via banner. */
+  lastError: string | null;
+  clearError: () => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -273,18 +276,22 @@ const GameContext = createContext<GameContextType | undefined>(undefined);
 export function GameProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<GameState>(initialState);
   const [generatingEvent, setGeneratingEvent] = useState(false);
+  // Phase 3 — `lastError` surfaces save/load failures to the UI via the root
+  // layout's `<SaveErrorBanner />`. Previously these were silently swallowed.
+  const [lastError, setLastError] = useState<string | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Phase 3 — `stateRef` lets the autosave interval and async callbacks (AI
+  // event generation) read the latest committed state without subscribing to
+  // it as a dep. Re-subscribing on every state change broke the 30s autosave
+  // entirely (the interval was destroyed before it could ever fire).
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  const clearError = useCallback(() => setLastError(null), []);
 
   useEffect(() => {
     loadGame();
   }, []);
-
-  useEffect(() => {
-    tickRef.current = setInterval(tick, TICK_INTERVAL);
-    return () => {
-      if (tickRef.current) clearInterval(tickRef.current);
-    };
-  }, [state.buildings, state.technologies, state.prestigeLevel]);
 
   const loadGame = async () => {
     try {
@@ -310,8 +317,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
         setState(loaded);
       }
-    } catch {
-      // use defaults
+    } catch (err) {
+      // Phase 3 — surface load failures instead of swallowing them. The save
+      // is likely corrupt; the player keeps playing on default state but at
+      // least sees what happened.
+      console.error('[GameContext] loadGame failed:', err);
+      setLastError('Save file could not be loaded — starting a new game state.');
     }
   };
 
@@ -347,7 +358,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const saveGame = useCallback(async (s: GameState) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, lastSave: Date.now() }));
-    } catch {}
+    } catch (err) {
+      // Phase 3 — surface save failures so players know their progress isn't
+      // being persisted (e.g., quota exceeded, storage permission revoked).
+      console.error('[GameContext] saveGame failed:', err);
+      setLastError('Save failed — your latest progress may not persist. Try again or free up device storage.');
+    }
   }, []);
 
   const tick = useCallback(() => {
@@ -407,6 +423,19 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // Phase 3 — tick is dependency-free (`useCallback(..., [])`) and reads
+  // everything through `setState(prev => …)`, so the interval can be set up
+  // once on mount instead of being torn down/rebuilt on every build, research,
+  // or prestige change. Previously this caused tick drift right after any
+  // action that mutated those slices. Placed *after* `tick` is declared to
+  // avoid the temporal-dead-zone reference.
+  useEffect(() => {
+    tickRef.current = setInterval(tick, TICK_INTERVAL);
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+    };
+  }, [tick]);
+
   const getElementQuantity = (elementId: string) => {
     return state.elements.find(e => e.id === elementId)?.quantity ?? 0;
   };
@@ -436,75 +465,89 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return { elements: newElems, credits: newCredits };
   };
 
+  // Phase 3 — all action callbacks moved to `[]` deps. State is read via
+  // `setState(prev => …)`; return values are captured through an outer `let`
+  // (React's setState updater is invoked synchronously, so the outer closure
+  // is populated before the function returns).
   const mineZone = useCallback((zoneId: string, miningType: 'safe' | 'aggressive' | 'deep') => {
-    const zone = state.planetZones.find(z => z.id === zoneId);
-    if (!zone || !zone.unlocked) return { success: false, rewards: {}, message: 'Zone not accessible' };
-
-    const now = Date.now();
-    const cooldown = miningType === 'safe' ? 3000 : miningType === 'aggressive' ? 2000 : 5000;
-    if (now - zone.lastMined < cooldown) return { success: false, rewards: {}, message: 'Zone cooling down...' };
-
-    const riskMap = { safe: 0, aggressive: 0.25, deep: 0.5 };
-    const multiplierMap = { safe: 1, aggressive: 2.5, deep: 5 };
-    const risk = riskMap[miningType];
-    const mult = multiplierMap[miningType] * state.miningMultiplier * (1 + state.prestigeLevel * 0.1);
-
-    if (Math.random() < risk) {
-      setState(prev => ({
-        ...prev,
-        planetZones: prev.planetZones.map(z => z.id === zoneId ? { ...z, lastMined: now } : z),
-      }));
-      return { success: false, rewards: {}, message: miningType === 'deep' ? 'Cave collapse! Nothing recovered.' : 'Mining accident! No yield.' };
-    }
-
-    const rewards: Record<string, number> = {};
-    const elemIds = zone.elements;
-    for (const elemId of elemIds) {
-      const elem = state.elements.find(e => e.id === elemId);
-      if (!elem) continue;
-      const base = Math.floor(zone.baseYield * mult * (Math.random() * 0.5 + 0.75));
-      rewards[elemId] = Math.max(1, base);
-    }
-
-    if (miningType === 'deep' && Math.random() < 0.15) {
-      const undiscovered = state.elements.filter(e => !e.discovered);
-      if (undiscovered.length > 0) {
-        const newElem = undiscovered[Math.floor(Math.random() * undiscovered.length)];
-        rewards[newElem.id] = (rewards[newElem.id] ?? 0) + Math.floor(Math.random() * 10) + 1;
-      }
-    }
-
+    let result: { success: boolean; rewards: Record<string, number>; message: string } = {
+      success: false, rewards: {}, message: 'Zone not accessible',
+    };
     setState(prev => {
+      const zone = prev.planetZones.find(z => z.id === zoneId);
+      if (!zone || !zone.unlocked) return prev;
+
+      const now = Date.now();
+      const cooldown = miningType === 'safe' ? 3000 : miningType === 'aggressive' ? 2000 : 5000;
+      if (now - zone.lastMined < cooldown) {
+        result = { success: false, rewards: {}, message: 'Zone cooling down...' };
+        return prev;
+      }
+
+      const riskMap = { safe: 0, aggressive: 0.25, deep: 0.5 };
+      const multiplierMap = { safe: 1, aggressive: 2.5, deep: 5 };
+      const risk = riskMap[miningType];
+      const mult = multiplierMap[miningType] * prev.miningMultiplier * (1 + prev.prestigeLevel * 0.1);
+
+      if (Math.random() < risk) {
+        result = { success: false, rewards: {}, message: miningType === 'deep' ? 'Cave collapse! Nothing recovered.' : 'Mining accident! No yield.' };
+        return {
+          ...prev,
+          planetZones: prev.planetZones.map(z => z.id === zoneId ? { ...z, lastMined: now } : z),
+        };
+      }
+
+      const rewards: Record<string, number> = {};
+      for (const elemId of zone.elements) {
+        const elem = prev.elements.find(e => e.id === elemId);
+        if (!elem) continue;
+        const base = Math.floor(zone.baseYield * mult * (Math.random() * 0.5 + 0.75));
+        rewards[elemId] = Math.max(1, base);
+      }
+
+      if (miningType === 'deep' && Math.random() < 0.15) {
+        const undiscovered = prev.elements.filter(e => !e.discovered);
+        if (undiscovered.length > 0) {
+          const newElem = undiscovered[Math.floor(Math.random() * undiscovered.length)];
+          rewards[newElem.id] = (rewards[newElem.id] ?? 0) + Math.floor(Math.random() * 10) + 1;
+        }
+      }
+
       const elems = prev.elements.map(e => {
         if (!rewards[e.id]) return e;
         const newQty = Math.min(e.quantity + rewards[e.id], prev.storageCapacity);
         return { ...e, quantity: newQty, discovered: true };
       });
       const zones = prev.planetZones.map(z => z.id === zoneId ? { ...z, lastMined: now } : z);
-
       const updatedAchievements = checkAchievements(prev.achievements, elems, prev.buildings, prev.technologies);
+
+      result = { success: true, rewards, message: 'Mined successfully!' };
       return { ...prev, elements: elems, planetZones: zones, achievements: updatedAchievements };
     });
-
-    return { success: true, rewards, message: `Mined successfully!` };
-  }, [state]);
+    return result;
+  }, []);
 
   const constructBuilding = useCallback((buildingId: string) => {
-    const building = state.buildings.find(b => b.id === buildingId);
-    if (!building) return { success: false, message: 'Building not found' };
-    if (building.level > 0) return { success: false, message: 'Already constructed' };
-
-    // Tech-discounted cost (structural_engineering → ×0.8). Floored, min 1 per resource.
-    const discountedCost: Record<string, number> = {};
-    Object.entries(building.baseCost).forEach(([k, v]) => {
-      discountedCost[k] = Math.max(1, Math.floor(v * state.buildingCostMultiplier));
-    });
-
-    if (!canAfford(discountedCost, state.elements, state.credits)) {
-      return { success: false, message: 'Insufficient resources' };
-    }
-
+    let result: { success: boolean; message: string } = { success: false, message: 'Building not found' };
     setState(prev => {
+      const building = prev.buildings.find(b => b.id === buildingId);
+      if (!building) return prev;
+      if (building.level > 0) {
+        result = { success: false, message: 'Already constructed' };
+        return prev;
+      }
+
+      // Tech-discounted cost (structural_engineering → ×0.8). Floored, min 1 per resource.
+      const discountedCost: Record<string, number> = {};
+      Object.entries(building.baseCost).forEach(([k, v]) => {
+        discountedCost[k] = Math.max(1, Math.floor(v * prev.buildingCostMultiplier));
+      });
+
+      if (!canAfford(discountedCost, prev.elements, prev.credits)) {
+        result = { success: false, message: 'Insufficient resources' };
+        return prev;
+      }
+
       const { elements, credits } = deductCost(discountedCost, prev.elements, prev.credits);
       const buildings = prev.buildings.map(b => b.id === buildingId ? { ...b, level: 1 } : b);
       const storageCapacity = prev.storageCapacity + (buildingId === 'storage_basic' ? 500 : 0);
@@ -515,28 +558,34 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         ? prev.factions.map(f => f.id === 'vael' && !f.discovered ? { ...f, discovered: true } : f)
         : prev.factions;
       const updatedAchievements = checkAchievements(prev.achievements, elements, buildings, prev.technologies);
+
+      result = { success: true, message: 'Construction complete!' };
       return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower, factions, achievements: updatedAchievements };
     });
-    return { success: true, message: 'Construction complete!' };
-  }, [state]);
+    return result;
+  }, []);
 
   const upgradeBuilding = useCallback((buildingId: string) => {
-    const building = state.buildings.find(b => b.id === buildingId);
-    if (!building || building.level === 0) return { success: false, message: 'Build it first' };
-    if (building.level >= building.maxLevel) return { success: false, message: 'Max level reached' };
-
-    // Apply structural_engineering discount on upgrade costs as well.
-    const upgradeCost: Record<string, number> = {};
-    Object.entries(building.baseCost).forEach(([k, v]) => {
-      const scaled = v * Math.pow(building.upgradeMultiplier, building.level) * state.buildingCostMultiplier;
-      upgradeCost[k] = Math.max(1, Math.floor(scaled));
-    });
-
-    if (!canAfford(upgradeCost, state.elements, state.credits)) {
-      return { success: false, message: 'Insufficient resources' };
-    }
-
+    let result: { success: boolean; message: string } = { success: false, message: 'Build it first' };
     setState(prev => {
+      const building = prev.buildings.find(b => b.id === buildingId);
+      if (!building || building.level === 0) return prev;
+      if (building.level >= building.maxLevel) {
+        result = { success: false, message: 'Max level reached' };
+        return prev;
+      }
+
+      const upgradeCost: Record<string, number> = {};
+      Object.entries(building.baseCost).forEach(([k, v]) => {
+        const scaled = v * Math.pow(building.upgradeMultiplier, building.level) * prev.buildingCostMultiplier;
+        upgradeCost[k] = Math.max(1, Math.floor(scaled));
+      });
+
+      if (!canAfford(upgradeCost, prev.elements, prev.credits)) {
+        result = { success: false, message: 'Insufficient resources' };
+        return prev;
+      }
+
       const { elements, credits } = deductCost(upgradeCost, prev.elements, prev.credits);
       const buildings = prev.buildings.map(b => b.id === buildingId ? { ...b, level: b.level + 1 } : b);
       let storageCapacity = prev.storageCapacity;
@@ -545,10 +594,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       if (buildingId === 'storage_basic') storageCapacity += 500;
       if (buildingId === 'habitat_basic') maxPopulation += 20;
       if (buildingId === 'defense_basic') defensePower += 25;
+
+      result = { success: true, message: 'Upgrade complete!' };
       return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower };
     });
-    return { success: true, message: 'Upgrade complete!' };
-  }, [state]);
+    return result;
+  }, []);
 
   const demolishBuilding = useCallback((buildingId: string) => {
     setState(prev => {
@@ -581,84 +632,91 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const startResearch = useCallback((techId: string) => {
-    if (state.currentResearch) return { success: false, message: 'Already researching' };
-    const tech = state.technologies.find(t => t.id === techId);
-    if (!tech) return { success: false, message: 'Tech not found' };
-    if (tech.researched) return { success: false, message: 'Already researched' };
-
-    const prereqsMet = tech.prerequisites.every(p => state.technologies.find(t => t.id === p)?.researched);
-    if (!prereqsMet) return { success: false, message: 'Prerequisites not met' };
-    if (!canAfford(tech.cost, state.elements, state.credits)) return { success: false, message: 'Insufficient resources' };
-
+    let result: { success: boolean; message: string } = { success: false, message: 'Tech not found' };
     setState(prev => {
+      if (prev.currentResearch) {
+        result = { success: false, message: 'Already researching' };
+        return prev;
+      }
+      const tech = prev.technologies.find(t => t.id === techId);
+      if (!tech) return prev;
+      if (tech.researched) {
+        result = { success: false, message: 'Already researched' };
+        return prev;
+      }
+      const prereqsMet = tech.prerequisites.every(p => prev.technologies.find(t => t.id === p)?.researched);
+      if (!prereqsMet) {
+        result = { success: false, message: 'Prerequisites not met' };
+        return prev;
+      }
+      if (!canAfford(tech.cost, prev.elements, prev.credits)) {
+        result = { success: false, message: 'Insufficient resources' };
+        return prev;
+      }
       const { elements, credits } = deductCost(tech.cost, prev.elements, prev.credits);
+      result = { success: true, message: `Researching ${tech.name}...` };
       return { ...prev, elements, credits, currentResearch: techId, researchProgress: 0 };
     });
-    return { success: true, message: `Researching ${tech.name}...` };
-  }, [state]);
+    return result;
+  }, []);
 
   const resolveEvent = useCallback((eventId: string, choiceId: string): EventResolution | null => {
-    const event = state.activeEvents.find(e => e.id === eventId);
-    if (!event) return null;
-    const choice = event.choices.find(c => c.id === choiceId);
-    if (!choice) return null;
+    let resolution: EventResolution | null = null;
+    setState(prev => {
+      const event = prev.activeEvents.find(e => e.id === eventId);
+      if (!event) return prev;
+      const choice = event.choices.find(c => c.id === choiceId);
+      if (!choice) return prev;
 
-    // Compute critical outcome: chance varies by event type.
-    const critChanceByType: Record<string, number> = {
-      discovery: 0.24, story: 0.18, random: 0.20, threat: 0.16,
-    };
-    const critical = Math.random() < (critChanceByType[event.type] ?? 0.2);
+      // Compute critical outcome: chance varies by event type.
+      const critChanceByType: Record<string, number> = {
+        discovery: 0.24, story: 0.18, random: 0.20, threat: 0.16,
+      };
+      const critical = Math.random() < (critChanceByType[event.type] ?? 0.2);
 
-    // Build final resource changes (with critical modifier).
-    const finalResourceChanges: Record<string, number> = { ...(choice.resourceChanges || {}) };
-    if (critical) {
-      Object.keys(finalResourceChanges).forEach(k => {
-        const v = finalResourceChanges[k];
-        if (v > 0) finalResourceChanges[k] = Math.round(v * 1.6);
-        else if (v < 0 && event.type !== 'threat') finalResourceChanges[k] = Math.round(v * 0.4);
-      });
-      // Discovery / story criticals: bonus rare element
-      if ((event.type === 'discovery' || event.type === 'story') && Object.keys(finalResourceChanges).length > 0) {
-        const rares = state.elements.filter(e => e.rarity === 'rare' || e.rarity === 'epic');
-        if (rares.length > 0) {
-          const bonus = rares[Math.floor(Math.random() * rares.length)];
-          finalResourceChanges[bonus.id] = (finalResourceChanges[bonus.id] || 0) + (event.type === 'discovery' ? 25 : 15);
+      const finalResourceChanges: Record<string, number> = { ...(choice.resourceChanges || {}) };
+      if (critical) {
+        Object.keys(finalResourceChanges).forEach(k => {
+          const v = finalResourceChanges[k];
+          if (v > 0) finalResourceChanges[k] = Math.round(v * 1.6);
+          else if (v < 0 && event.type !== 'threat') finalResourceChanges[k] = Math.round(v * 0.4);
+        });
+        if ((event.type === 'discovery' || event.type === 'story') && Object.keys(finalResourceChanges).length > 0) {
+          const rares = prev.elements.filter(e => e.rarity === 'rare' || e.rarity === 'epic');
+          if (rares.length > 0) {
+            const bonus = rares[Math.floor(Math.random() * rares.length)];
+            finalResourceChanges[bonus.id] = (finalResourceChanges[bonus.id] || 0) + (event.type === 'discovery' ? 25 : 15);
+          }
         }
       }
-    }
 
-    const finalReputationChange = critical && choice.reputationChange
-      ? Math.round(choice.reputationChange * (choice.reputationChange > 0 ? 1.5 : 0.5))
-      : (choice.reputationChange ?? 0);
+      const finalReputationChange = critical && choice.reputationChange
+        ? Math.round(choice.reputationChange * (choice.reputationChange > 0 ? 1.5 : 0.5))
+        : (choice.reputationChange ?? 0);
 
-    // Net score for headline tone (positive = favorable).
-    const resScore = Object.values(finalResourceChanges).reduce((acc, v) => acc + (v > 0 ? 1 : v < 0 ? -1 : 0), 0);
-    const netScore = resScore * 5 + finalReputationChange;
+      const resScore = Object.values(finalResourceChanges).reduce((acc, v) => acc + (v > 0 ? 1 : v < 0 ? -1 : 0), 0);
+      const netScore = resScore * 5 + finalReputationChange;
 
-    const resolution: EventResolution = {
-      id: `${eventId}_${Date.now()}`,
-      eventId,
-      eventTitle: event.title,
-      eventType: event.type,
-      choiceId,
-      choiceText: choice.text,
-      consequence: choice.consequence,
-      resourceChanges: finalResourceChanges,
-      reputationChange: finalReputationChange,
-      critical,
-      netScore,
-      timestamp: Date.now(),
-    };
+      resolution = {
+        id: `${eventId}_${Date.now()}`,
+        eventId,
+        eventTitle: event.title,
+        eventType: event.type,
+        choiceId,
+        choiceText: choice.text,
+        consequence: choice.consequence,
+        resourceChanges: finalResourceChanges,
+        reputationChange: finalReputationChange,
+        critical,
+        netScore,
+        timestamp: Date.now(),
+      };
 
-    setState(prev => {
       let elements = [...prev.elements];
       let credits = prev.credits;
       Object.keys(finalResourceChanges).forEach(k => {
         const change = finalResourceChanges[k];
-        if (k === 'credits') {
-          credits += change;
-          return;
-        }
+        if (k === 'credits') { credits += change; return; }
         elements = elements.map(e => e.id === k ? { ...e, quantity: Math.max(0, e.quantity + change) } : e);
       });
 
@@ -681,72 +739,65 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         eventLog: [resolution, ...prev.eventLog].slice(0, 25),
       };
     });
-
     return resolution;
-  }, [state]);
+  }, []);
 
   const engageCombat = useCallback((factionId: string, strategy: 'attack' | 'defend' | 'retreat') => {
-    const faction = state.factions.find(f => f.id === factionId);
-    // Plasma Weapons (×1.4) actively boosts player combat power.
-    const rawPower = state.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + state.defensePower;
-    const playerPower = rawPower * state.combatMultiplier;
-
-    // Phase 2 — enemy power now scales with the player's progression rather
-    // than perversely getting *weaker* as reputation rises. Floor of 50 keeps
-    // combat meaningful from turn one; era + prestige carry the difficulty
-    // curve; |reputation| means both hostile *and* allied factions field a
-    // serious force. Personality is a flavor modifier.
-    const eraScale = (state.era - 1) * 40;
-    const prestigeScale = state.prestigeLevel * 30;
-    const repFactor = Math.abs(faction?.reputation ?? 0) * 0.25;
-    const personalityMod = faction?.personality === 'militaristic'
-      ? 25
-      : faction?.personality === 'merchant' ? -10 : 0;
-    const enemyPower = Math.max(50, 50 + eraScale + prestigeScale + repFactor + personalityMod);
-
-    let outcome: 'win' | 'loss' | 'draw' = 'draw';
-    let details = '';
-
-    if (strategy === 'retreat') {
-      outcome = 'draw';
-      details = 'You retreated from battle.';
-    } else {
-      const stratBonus = strategy === 'attack' ? 1.3 : 0.8;
-      const playerEffective = playerPower * stratBonus * (Math.random() * 0.4 + 0.8);
-      const enemyEffective = enemyPower * (Math.random() * 0.4 + 0.8);
-
-      if (playerEffective > enemyEffective * 1.2) {
-        outcome = 'win';
-        details = `Victory! Gained resources and ${faction?.name} reputation.`;
-      } else if (enemyEffective > playerEffective * 1.2) {
-        outcome = 'loss';
-        details = `Defeat. ${faction?.name} forces overwhelmed your fleet.`;
-      } else {
-        outcome = 'draw';
-        details = 'The battle was inconclusive. Both sides withdrew.';
-      }
-    }
-
-    const entry: CombatEntry = {
-      id: Date.now().toString(),
-      factionId,
-      type: strategy === 'defend' ? 'defend' : 'attack',
-      outcome,
-      timestamp: Date.now(),
-      details,
-    };
-
+    let entry: CombatEntry | null = null;
     setState(prev => {
+      const faction = prev.factions.find(f => f.id === factionId);
+      const rawPower = prev.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + prev.defensePower;
+      const playerPower = rawPower * prev.combatMultiplier;
+
+      const eraScale = (prev.era - 1) * 40;
+      const prestigeScale = prev.prestigeLevel * 30;
+      const repFactor = Math.abs(faction?.reputation ?? 0) * 0.25;
+      const personalityMod = faction?.personality === 'militaristic'
+        ? 25
+        : faction?.personality === 'merchant' ? -10 : 0;
+      const enemyPower = Math.max(50, 50 + eraScale + prestigeScale + repFactor + personalityMod);
+
+      let outcome: 'win' | 'loss' | 'draw' = 'draw';
+      let details = '';
+
+      if (strategy === 'retreat') {
+        details = 'You retreated from battle.';
+      } else {
+        const stratBonus = strategy === 'attack' ? 1.3 : 0.8;
+        const playerEffective = playerPower * stratBonus * (Math.random() * 0.4 + 0.8);
+        const enemyEffective = enemyPower * (Math.random() * 0.4 + 0.8);
+
+        if (playerEffective > enemyEffective * 1.2) {
+          outcome = 'win';
+          details = `Victory! Gained resources and ${faction?.name} reputation.`;
+        } else if (enemyEffective > playerEffective * 1.2) {
+          outcome = 'loss';
+          details = `Defeat. ${faction?.name} forces overwhelmed your fleet.`;
+        } else {
+          details = 'The battle was inconclusive. Both sides withdrew.';
+        }
+      }
+
+      entry = {
+        id: Date.now().toString(),
+        factionId,
+        type: strategy === 'defend' ? 'defend' : 'attack',
+        outcome,
+        timestamp: Date.now(),
+        details,
+      };
+
       const reputationChange = outcome === 'win' ? 20 : outcome === 'loss' ? -10 : 0;
       const factions = prev.factions.map(f =>
         f.id === factionId ? { ...f, reputation: Math.max(-100, Math.min(100, f.reputation + reputationChange)) } : f
       );
-      const updatedAchievements = outcome === 'win' ? checkAchievements(prev.achievements, prev.elements, prev.buildings, prev.technologies, 'combat') : prev.achievements;
+      const updatedAchievements = outcome === 'win'
+        ? checkAchievements(prev.achievements, prev.elements, prev.buildings, prev.technologies, 'combat')
+        : prev.achievements;
       return { ...prev, factions, combatLog: [entry, ...prev.combatLog].slice(0, 20), achievements: updatedAchievements };
     });
-
-    return entry;
-  }, [state]);
+    return entry as unknown as CombatEntry;
+  }, []);
 
   const runEspionage = useCallback((factionId: string, mission: 'scan' | 'spy' | 'disrupt' | 'fake') => {
     const successRates = { scan: 0.9, spy: 0.6, disrupt: 0.5, fake: 0.7 };
@@ -776,20 +827,22 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const claimDailyReward = useCallback(() => {
-    if (state.dailyRewardClaimed) return { success: false, rewards: {} };
-
-    const day = Math.min(state.loginStreak, 7);
-    const rewards: Record<string, number> = {};
-    if (day < 7) {
-      rewards['credits'] = day * 50;
-      rewards['Fe'] = day * 20;
-    } else {
-      rewards['prestigePoints'] = 1;
-      rewards['credits'] = 500;
-    }
-
+    let result: { success: boolean; rewards: Record<string, number> } = { success: false, rewards: {} };
     setState(prev => {
+      if (prev.dailyRewardClaimed) return prev;
+
+      const day = Math.min(prev.loginStreak, 7);
+      const rewards: Record<string, number> = {};
+      if (day < 7) {
+        rewards['credits'] = day * 50;
+        rewards['Fe'] = day * 20;
+      } else {
+        rewards['prestigePoints'] = 1;
+        rewards['credits'] = 500;
+      }
+
       const elements = prev.elements.map(e => rewards[e.id] ? { ...e, quantity: e.quantity + rewards[e.id] } : e);
+      result = { success: true, rewards };
       return {
         ...prev,
         elements,
@@ -798,9 +851,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         dailyRewardClaimed: true,
       };
     });
-
-    return { success: true, rewards };
-  }, [state]);
+    return result;
+  }, []);
 
   const performPrestige = useCallback(() => {
     setState(prev => {
@@ -823,28 +875,34 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const recruitUnits = useCallback((unitId: string, count: number) => {
-    const unit = state.units.find(u => u.id === unitId);
-    if (!unit) return { success: false, message: 'Unit not found' };
-
-    const totalCost: Record<string, number> = {};
-    Object.entries(unit.cost).forEach(([k, v]) => { totalCost[k] = v * count; });
-
-    if (!canAfford(totalCost, state.elements, state.credits)) return { success: false, message: 'Insufficient resources' };
-
+    let result: { success: boolean; message: string } = { success: false, message: 'Unit not found' };
     setState(prev => {
+      const unit = prev.units.find(u => u.id === unitId);
+      if (!unit) return prev;
+
+      const totalCost: Record<string, number> = {};
+      Object.entries(unit.cost).forEach(([k, v]) => { totalCost[k] = v * count; });
+
+      if (!canAfford(totalCost, prev.elements, prev.credits)) {
+        result = { success: false, message: 'Insufficient resources' };
+        return prev;
+      }
+
       const { elements, credits } = deductCost(totalCost, prev.elements, prev.credits);
       const units = prev.units.map(u => u.id === unitId ? { ...u, count: u.count + count } : u);
+      result = { success: true, message: `Recruited ${count} ${unit.name}(s)` };
       return { ...prev, elements, credits, units };
     });
-
-    return { success: true, message: `Recruited ${count} ${unit.name}(s)` };
-  }, [state]);
+    return result;
+  }, []);
 
   const generateEvent = useCallback(() => {
     if (generatingEvent) return;
     setGeneratingEvent(true);
 
-    const currentState = state;
+    // Phase 3 — read latest state via stateRef so this callback no longer
+    // needs `state` in its dep array (which made it churn every tick).
+    const currentState = stateRef.current;
     const elementsDiscovered = currentState.elements
       .filter(e => e.discovered)
       .map(e => e.symbol);
@@ -896,7 +954,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         });
         setGeneratingEvent(false);
       });
-  }, [generatingEvent, state]);
+  }, [generatingEvent]);
 
   const checkAchievements = (
     achievements: Achievement[],
@@ -908,7 +966,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return achievements.map(a => {
       if (a.unlocked) return a;
       let progress = a.progress;
-      let unlocked = a.unlocked;
+      // Explicit annotation: after the early-return above, TS narrows
+      // `a.unlocked` to literal `false`, which makes the later `unlocked = true`
+      // assignment fail. Widening to `boolean` keeps the achievement-flip path
+      // type-safe.
+      let unlocked: boolean = a.unlocked;
 
       switch (a.id) {
         case 'first_mine':
@@ -939,10 +1001,15 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  // Phase 3 — autosave every 30s using stateRef so the interval is set up
+  // exactly once. Previously deps were `[state, saveGame]` which destroyed and
+  // recreated the interval on every tick, meaning autosave never actually
+  // fired (the only path that saved was the AsyncStorage call inside loadGame
+  // recovery — i.e., never).
   useEffect(() => {
-    const saveInterval = setInterval(() => saveGame(state), 30000);
+    const saveInterval = setInterval(() => saveGame(stateRef.current), 30000);
     return () => clearInterval(saveInterval);
-  }, [state, saveGame]);
+  }, [saveGame]);
 
   return (
     <GameContext.Provider value={{
@@ -964,6 +1031,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       getFactionRelationship,
       generateEvent,
       generatingEvent,
+      lastError,
+      clearError,
     }}>
       {children}
     </GameContext.Provider>

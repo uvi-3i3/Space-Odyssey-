@@ -17,9 +17,48 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { Pressable, Text, View } from "react-native";
+
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { GameProvider } from "@/context/GameContext";
+import { GameProvider, useGame } from "@/context/GameContext";
 import { ResourceBar } from "@/components/ResourceBar";
+
+// Phase 3 — small toast that surfaces save/load failures from GameContext.
+// Lives inside GameProvider so it can subscribe to `lastError`. Sits above
+// the app via `position: 'absolute'` and high zIndex.
+function SaveErrorBanner() {
+  const { lastError, clearError } = useGame();
+  if (!lastError) return null;
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        top: 60,
+        left: 12,
+        right: 12,
+        zIndex: 9999,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+        padding: 12,
+        backgroundColor: "#7A1F1F",
+        borderColor: "#FF6868",
+        borderWidth: 1,
+        borderRadius: 8,
+      }}
+    >
+      <Text style={{ flex: 1, color: "#FFE5E5", fontSize: 13 }}>{lastError}</Text>
+      <Pressable
+        onPress={clearError}
+        hitSlop={8}
+        style={{ paddingHorizontal: 8, paddingVertical: 2 }}
+      >
+        <Text style={{ color: "#FFFFFF", fontWeight: "700" }}>×</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 SplashScreen.preventAutoHideAsync();
 
@@ -65,6 +104,7 @@ export default function RootLayout() {
             <KeyboardProvider>
               <GameProvider>
                 <RootLayoutNav />
+                <SaveErrorBanner />
               </GameProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>

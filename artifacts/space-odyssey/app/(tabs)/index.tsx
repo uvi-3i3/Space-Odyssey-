@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   Dimensions, Animated, Platform, Modal,
@@ -46,7 +46,12 @@ export default function PlanetScreen() {
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const bounceAnim = useRef(new Animated.Value(1)).current;
 
-  const selectedZoneData = PLANET_ZONES.find(z => z.id === selectedZone);
+  // Phase 3 — memoize zone lookup so it doesn't re-run on every unrelated state
+  // change (tick increments, credit ticks, etc.).
+  const selectedZoneData = useMemo(
+    () => PLANET_ZONES.find(z => z.id === selectedZone),
+    [selectedZone],
+  );
   const paddingBottom = Platform.OS === 'web' ? 34 : 0;
 
   const handleMine = () => {
@@ -72,8 +77,16 @@ export default function PlanetScreen() {
     setTimeout(() => setResult(null), 3000);
   };
 
-  const unlockedCount = state.planetZones.filter(z => z.unlocked).length;
-  const discoveredCount = state.elements.filter(e => e.discovered).length;
+  // Phase 3 — memoize counts; these arrays only mutate on unlocks/discoveries,
+  // not on every tick.
+  const unlockedCount = useMemo(
+    () => state.planetZones.filter(z => z.unlocked).length,
+    [state.planetZones],
+  );
+  const discoveredCount = useMemo(
+    () => state.elements.filter(e => e.discovered).length,
+    [state.elements],
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
