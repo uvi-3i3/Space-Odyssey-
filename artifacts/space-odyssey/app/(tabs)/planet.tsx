@@ -93,22 +93,20 @@ export default function PlanetScreen() {
           </Text>
         </View>
 
-        {(() => {
-          const planetType = state.planetType ?? 'TERRAN';
-          const planetAsset = PLANET_IMAGES[planetType] ?? PLANET_IMAGES.TERRAN;
-          const planetUri = Asset.fromModule(planetAsset).uri;
-          return (
-            <View style={styles.planetVisual}>
-              {planetUri ? (
-                <SvgUri width={220} height={220} uri={planetUri} />
-              ) : null}
-            </View>
-          );
-        })()}
-
         <View style={[styles.planetMap, { borderColor: colors.border, backgroundColor: colors.card }]}>
           <Text style={[styles.mapLabel, { color: colors.mutedForeground }]}>// PLANET SURFACE MAP</Text>
           <View style={styles.mapArea}>
+            {(() => {
+              const planetType = state.planetType ?? 'TERRAN';
+              const planetAsset = PLANET_IMAGES[planetType] ?? PLANET_IMAGES.TERRAN;
+              const planetUri = Asset.fromModule(planetAsset).uri;
+              return planetUri ? (
+                <View pointerEvents="none" style={styles.planetBackdrop}>
+                  <SvgUri width={220} height={220} uri={planetUri} />
+                </View>
+              ) : null;
+            })()}
+
             {PLANET_ZONES.map(zone => {
               const isUnlocked = state.planetZones.find(z => z.id === zone.id)?.unlocked ?? false;
               const isSelected = selectedZone === zone.id;
@@ -125,7 +123,7 @@ export default function PlanetScreen() {
                       left: `${zone.x}%` as any,
                       top: `${zone.y}%` as any,
                       borderColor: isSelected ? colors.primary : isUnlocked ? colors.border : colors.muted,
-                      backgroundColor: isSelected ? colors.primary + '44' : isUnlocked ? colors.card : colors.muted + '44',
+                      backgroundColor: isSelected ? colors.primary + 'CC' : isUnlocked ? colors.card + 'EE' : colors.muted + 'CC',
                     },
                   ]}
                   onPress={() => {
@@ -139,17 +137,11 @@ export default function PlanetScreen() {
                   <Feather
                     name={isUnlocked ? (isOnCooldown ? 'clock' : 'target') : 'lock'}
                     size={12}
-                    color={isSelected ? colors.primary : isUnlocked ? colors.mutedForeground : colors.muted + '88'}
+                    color={isSelected ? colors.background : isUnlocked ? colors.foreground : colors.muted + '88'}
                   />
                 </TouchableOpacity>
               );
             })}
-
-            <View style={[styles.planetCore, { borderColor: colors.primary + '55' }]}>
-              <View style={[styles.planetCoreInner, { backgroundColor: colors.primary + '22', borderColor: colors.primary + '44' }]}>
-                <Feather name="globe" size={20} color={colors.primary} />
-              </View>
-            </View>
           </View>
         </View>
 
@@ -300,7 +292,6 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 16, gap: 16 },
   planetHeader: { gap: 4 },
-  planetVisual: { width: '100%', alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
   planetTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', letterSpacing: 2 },
   planetSubtitle: { fontSize: 11, fontFamily: 'Inter_400Regular' },
   planetMap: {
@@ -311,10 +302,21 @@ const styles = StyleSheet.create({
   },
   mapLabel: { fontSize: 10, fontFamily: 'Inter_400Regular', marginBottom: 8, letterSpacing: 1 },
   mapArea: {
-    height: 200,
+    height: 280,
     position: 'relative',
     borderRadius: 4,
     overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  planetBackdrop: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   zoneMarker: {
     position: 'absolute',
@@ -326,27 +328,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: -14,
     marginTop: -14,
-  },
-  planetCore: {
-    position: 'absolute',
-    left: '50%',
-    top: '50%',
-    width: 50,
-    height: 50,
-    marginLeft: -25,
-    marginTop: -25,
-    borderRadius: 25,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  planetCoreInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    zIndex: 2,
   },
   zoneDetail: {
     borderWidth: 1.5,
