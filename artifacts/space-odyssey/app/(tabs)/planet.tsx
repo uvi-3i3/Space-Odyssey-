@@ -6,11 +6,28 @@ import {
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import { SvgUri } from 'react-native-svg';
+import { Asset } from 'expo-asset';
 import { useGame } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
 import { RarityBadge } from '@/components/RarityBadge';
 import { PLANET_ZONES } from '@/constants/gameData';
+
+const PLANET_IMAGES: Record<string, any> = {
+  TERRAN: require('@/assets/planets/TERRAN.svg'),
+  DESERT: require('@/assets/planets/DESERT.svg'),
+  ICEWORLD: require('@/assets/planets/ICEWORLD.svg'),
+  VOLCANIC: require('@/assets/planets/VOLCANIC.svg'),
+  GAS_GIANT: require('@/assets/planets/GAS_GIANT.svg'),
+  TOXIC: require('@/assets/planets/TOXIC.svg'),
+  CRYSTALLINE: require('@/assets/planets/CRYSTALLINE.svg'),
+  OCEANIC: require('@/assets/planets/OCEANIC.svg'),
+  METALLIC: require('@/assets/planets/TERRAN.svg'),
+  VOID: require('@/assets/planets/TERRAN.svg'),
+  BARREN: require('@/assets/planets/DESERT.svg'),
+  ALIEN: require('@/assets/planets/TOXIC.svg'),
+};
 
 const { width } = Dimensions.get('window');
 
@@ -75,6 +92,19 @@ export default function PlanetScreen() {
             {state.planetZones.filter(z => z.unlocked).length}/{state.planetZones.length} ZONES ACCESSIBLE
           </Text>
         </View>
+
+        {(() => {
+          const planetType = state.planetType ?? 'TERRAN';
+          const planetAsset = PLANET_IMAGES[planetType] ?? PLANET_IMAGES.TERRAN;
+          const planetUri = Asset.fromModule(planetAsset).uri;
+          return (
+            <View style={styles.planetVisual}>
+              {planetUri ? (
+                <SvgUri width={220} height={220} uri={planetUri} />
+              ) : null}
+            </View>
+          );
+        })()}
 
         <View style={[styles.planetMap, { borderColor: colors.border, backgroundColor: colors.card }]}>
           <Text style={[styles.mapLabel, { color: colors.mutedForeground }]}>// PLANET SURFACE MAP</Text>
@@ -270,6 +300,7 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 16, gap: 16 },
   planetHeader: { gap: 4 },
+  planetVisual: { width: '100%', alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
   planetTitle: { fontSize: 14, fontFamily: 'Inter_700Bold', letterSpacing: 2 },
   planetSubtitle: { fontSize: 11, fontFamily: 'Inter_400Regular' },
   planetMap: {
