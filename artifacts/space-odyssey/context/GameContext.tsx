@@ -19,6 +19,8 @@ export interface GameState {
   defensePower: number;
   miningMultiplier: number;
   researchSpeed: number;
+  combatMultiplier: number;
+  buildingCostMultiplier: number;
   elements: Element[];
   buildings: Building[];
   technologies: Technology[];
@@ -102,6 +104,8 @@ const initialState: GameState = {
   defensePower: 10,
   miningMultiplier: 1.0,
   researchSpeed: 1.0,
+  combatMultiplier: 1.0,
+  buildingCostMultiplier: 1.0,
   elements: INITIAL_ELEMENTS,
   buildings: INITIAL_BUILDINGS,
   technologies: INITIAL_TECHNOLOGIES,
@@ -124,6 +128,118 @@ const initialState: GameState = {
   storageCapacity: 1000,
   activeTab: 'planet',
 };
+
+// ---------------------------------------------------------------------------
+// Phase 1 — pure progression helpers.
+// All helpers are pure (state in, state out) and module-scoped so they can be
+// composed inside setState(prev => ...) callbacks without stale closures.
+// ---------------------------------------------------------------------------
+
+function isResearched(s: GameState, techId: string): boolean {
+  return s.technologies.find(t => t.id === techId)?.researched ?? false;
+}
+
+/** Recompute every tech-derived multiplier from scratch off the tech list. */
+function recomputeDerivedStats(s: GameState): GameState {
+  let mining = 1.0;
+  if (isResearched(s, 'basic_mining')) mining *= 1.25;
+  if (isResearched(s, 'advanced_mining')) mining *= 2.0;
+
+  let research = 1.0;
+  if (isResearched(s, 'quantum_research')) research *= 1.5;
+
+  let combat = 1.0;
+  if (isResearched(s, 'plasma_weapons')) combat *= 1.4;
+
+  let buildCost = 1.0;
+  if (isResearched(s, 'structural_engineering')) buildCost *= 0.8;
+
+  if (
+    s.miningMultiplier === mining &&
+    s.researchSpeed === research &&
+    s.combatMultiplier === combat &&
+    s.buildingCostMultiplier === buildCost
+  ) return s;
+
+  return {
+    ...s,
+    miningMultiplier: mining,
+    researchSpeed: research,
+    combatMultiplier: combat,
+    buildingCostMultiplier: buildCost,
+  };
+}
+
+/** Unlock zones 4–8 as their gating techs are completed. */
+function applyZoneUnlocks(s: GameState): GameState {
+  const unlockMap: Record<string, boolean> = {
+    zone_4: isResearched(s, 'element_scanner'),
+    zone_5: isResearched(s, 'element_scanner'),
+    zone_6: isResearched(s, 'deep_drilling'),
+    zone_7: isResearched(s, 'advanced_mining'),
+    zone_8: isResearched(s, 'warp_drive'),
+  };
+  let changed = false;
+  const zones = s.planetZones.map(z => {
+    if (z.unlocked) return z;
+    if (unlockMap[z.id]) {
+      changed = true;
+      return { ...z, unlocked: true };
+    }
+    return z;
+  });
+  return changed ? { ...s, planetZones: zones } : s;
+}
+
+/** Advance state.era when every tech in the current era is researched. */
+function applyEraProgression(s: GameState): GameState {
+  let era = s.era;
+  while (era < 4) {
+    const eraTechs = s.technologies.filter(t => t.era === era);
+    if (eraTechs.length === 0) break;
+    if (!eraTechs.every(t => t.researched)) break;
+    era += 1;
+  }
+  if (era === s.era) return s;
+  const achievements = s.achievements.map(a =>
+    a.id === 'era_2' && era >= 2 && !a.unlocked
+      ? { ...a, progress: 1, unlocked: true }
+      : a,
+  );
+  return { ...s, era, achievements };
+}
+
+/** Reveal factions based on era + tech triggers (event-based reveal handled inline). */
+function applyFactionDiscovery(s: GameState): GameState {
+  let factions = s.factions;
+  let changed = false;
+
+  // Era 2 — the Zorathi (scientific scanners) make first contact.
+  if (s.era >= 2) {
+    const zIdx = factions.findIndex(f => f.id === 'zorathi');
+    if (zIdx >= 0 && !factions[zIdx].discovered) {
+      factions = factions.map(f => f.id === 'zorathi' ? { ...f, discovered: true } : f);
+      changed = true;
+    }
+  }
+
+  // Xenobiology — formal diplomacy reveals every faction.
+  if (isResearched(s, 'xenobiology') && factions.some(f => !f.discovered)) {
+    factions = factions.map(f => f.discovered ? f : { ...f, discovered: true });
+    changed = true;
+  }
+
+  return changed ? { ...s, factions } : s;
+}
+
+/** Single composite call: run after any change that may affect tech-driven progression. */
+function applyProgression(s: GameState): GameState {
+  let next = recomputeDerivedStats(s);
+  next = applyZoneUnlocks(next);
+  next = applyEraProgression(next);
+  next = applyFactionDiscovery(next);
+  return next;
+}
 
 interface GameContextType {
   state: GameState;
@@ -169,9 +285,14 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       if (saved) {
         const parsed = JSON.parse(saved) as GameState;
         if (!parsed.eventLog) parsed.eventLog = [];
+        if (parsed.combatMultiplier == null) parsed.combatMultiplier = 1.0;
+        if (parsed.buildingCostMultiplier == null) parsed.buildingCostMultiplier = 1.0;
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
-        const loaded = applyOfflineProgress(parsed, cappedTime);
+        let loaded = applyOfflineProgress(parsed, cappedTime);
+        // Re-derive every tech-driven multiplier and unlock state from the
+        // saved tech list, in case formulas changed since the save was written.
+        loaded = applyProgression(loaded);
         const today = new Date().toDateString();
         if (loaded.lastLoginDate !== today) {
           const yesterday = new Date(Date.now() - 86400000).toDateString();
@@ -238,6 +359,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       updated.credits = Math.min(prev.credits + 0.1, 999999);
       updated.totalPlayTime = prev.totalPlayTime + 1;
 
+      let researchCompleted = false;
       if (prev.currentResearch) {
         const techIdx = prev.technologies.findIndex(t => t.id === prev.currentResearch);
         if (techIdx >= 0) {
@@ -249,7 +371,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
             updated.technologies = techs;
             updated.currentResearch = null;
             updated.researchProgress = 0;
-            updated.researchSpeed = getResearchSpeed(techs);
+            researchCompleted = true;
           } else {
             updated.researchProgress = newProgress;
           }
@@ -264,15 +386,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      return updated;
+      // When research finishes mid-tick, recompute all tech-driven derived
+      // stats, zone unlocks, era advancement, and faction discovery in one pass.
+      return researchCompleted ? applyProgression(updated) : updated;
     });
   }, []);
-
-  const getResearchSpeed = (techs: Technology[]) => {
-    let speed = 1.0;
-    if (techs.find(t => t.id === 'quantum_research' && t.researched)) speed *= 1.5;
-    return speed;
-  };
 
   const getElementQuantity = (elementId: string) => {
     return state.elements.find(e => e.id === elementId)?.quantity ?? 0;
@@ -357,18 +475,28 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     if (!building) return { success: false, message: 'Building not found' };
     if (building.level > 0) return { success: false, message: 'Already constructed' };
 
-    if (!canAfford(building.baseCost, state.elements, state.credits)) {
+    // Tech-discounted cost (structural_engineering → ×0.8). Floored, min 1 per resource.
+    const discountedCost: Record<string, number> = {};
+    Object.entries(building.baseCost).forEach(([k, v]) => {
+      discountedCost[k] = Math.max(1, Math.floor(v * state.buildingCostMultiplier));
+    });
+
+    if (!canAfford(discountedCost, state.elements, state.credits)) {
       return { success: false, message: 'Insufficient resources' };
     }
 
     setState(prev => {
-      const { elements, credits } = deductCost(building.baseCost, prev.elements, prev.credits);
+      const { elements, credits } = deductCost(discountedCost, prev.elements, prev.credits);
       const buildings = prev.buildings.map(b => b.id === buildingId ? { ...b, level: 1 } : b);
       const storageCapacity = prev.storageCapacity + (buildingId === 'storage_basic' ? 500 : 0);
       const maxPopulation = prev.maxPopulation + (buildingId === 'habitat_basic' ? 20 : 0);
       const defensePower = prev.defensePower + (buildingId === 'defense_basic' ? 25 : 0);
+      // Building a Trade Nexus opens commerce with the Vael Merchants.
+      const factions = buildingId === 'trade_post'
+        ? prev.factions.map(f => f.id === 'vael' && !f.discovered ? { ...f, discovered: true } : f)
+        : prev.factions;
       const updatedAchievements = checkAchievements(prev.achievements, elements, buildings, prev.technologies);
-      return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower, achievements: updatedAchievements };
+      return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower, factions, achievements: updatedAchievements };
     });
     return { success: true, message: 'Construction complete!' };
   }, [state]);
@@ -378,9 +506,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     if (!building || building.level === 0) return { success: false, message: 'Build it first' };
     if (building.level >= building.maxLevel) return { success: false, message: 'Max level reached' };
 
+    // Apply structural_engineering discount on upgrade costs as well.
     const upgradeCost: Record<string, number> = {};
     Object.entries(building.baseCost).forEach(([k, v]) => {
-      upgradeCost[k] = Math.floor(v * Math.pow(building.upgradeMultiplier, building.level));
+      const scaled = v * Math.pow(building.upgradeMultiplier, building.level) * state.buildingCostMultiplier;
+      upgradeCost[k] = Math.max(1, Math.floor(scaled));
     });
 
     if (!canAfford(upgradeCost, state.elements, state.credits)) {
@@ -490,9 +620,14 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         elements = elements.map(e => e.id === k ? { ...e, quantity: Math.max(0, e.quantity + change) } : e);
       });
 
-      const factions = finalReputationChange ? prev.factions.map(f => ({
+      let factions = finalReputationChange ? prev.factions.map(f => ({
         ...f, reputation: Math.max(-100, Math.min(100, f.reputation + finalReputationChange)),
       })) : prev.factions;
+
+      // Krenn War Fleet event reveals the Krenn Empire on the diplomacy roster.
+      if (eventId === 'event_4') {
+        factions = factions.map(f => f.id === 'krenn' && !f.discovered ? { ...f, discovered: true } : f);
+      }
 
       return {
         ...prev,
@@ -510,7 +645,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const engageCombat = useCallback((factionId: string, strategy: 'attack' | 'defend' | 'retreat') => {
     const faction = state.factions.find(f => f.id === factionId);
-    const playerPower = state.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + state.defensePower;
+    // Plasma Weapons (×1.4) actively boosts player combat power.
+    const rawPower = state.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + state.defensePower;
+    const playerPower = rawPower * state.combatMultiplier;
     const enemyPower = 50 + (faction?.reputation ?? 0) * -0.5;
 
     let outcome: 'win' | 'loss' | 'draw' = 'draw';
@@ -614,18 +751,20 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const performPrestige = useCallback(() => {
     setState(prev => {
       const prestigeLevel = prev.prestigeLevel + 1;
-      return {
+      const reset: GameState = {
         ...initialState,
         prestigeLevel,
         prestigePoints: prev.prestigePoints + 5,
         loginStreak: prev.loginStreak,
         lastLoginDate: prev.lastLoginDate,
         dailyRewardClaimed: prev.dailyRewardClaimed,
-        miningMultiplier: 1 + prestigeLevel * 0.1,
         achievements: prev.achievements.map(a =>
           a.id === 'prestige_1' ? { ...a, unlocked: true, progress: 1 } : a
         ),
       };
+      // After reset, derived stats start back at base; applyProgression keeps
+      // them in sync (also covers any future tech-preserving prestige rules).
+      return applyProgression(reset);
     });
   }, []);
 
