@@ -18,6 +18,12 @@ uri = "file://artifacts/space-odyssey/assets/images/planet_bg.png"
 type = "image"
 title = "generated_image"
 
+[[generated]]
+id = "0Ly7sX3Vp2w2h81e3OrwV"
+uri = "file://artifacts/space-odyssey/assets/planets/terran.png"
+type = "image"
+title = "terran planet vector icon"
+
 [[outputs]]
 id = "adWyT9m7xjBOsc9fhMx6H"
 uri = "file://HANDOFF.md"

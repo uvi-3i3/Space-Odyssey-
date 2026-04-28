@@ -9,6 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { useGame } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
+import { PlanetIcon } from '@/components/PlanetIcon';
 import { RarityBadge } from '@/components/RarityBadge';
 import { PLANET_ZONES } from '@/constants/gameData';
 
@@ -115,10 +116,8 @@ export default function PlanetScreen() {
               );
             })}
 
-            <View style={[styles.planetCore, { borderColor: colors.primary + '55' }]}>
-              <View style={[styles.planetCoreInner, { backgroundColor: colors.primary + '22', borderColor: colors.primary + '44' }]}>
-                <Feather name="globe" size={20} color={colors.primary} />
-              </View>
+            <View style={styles.planetCore} pointerEvents="none">
+              <PlanetIcon type="terran" size={64} glowColor={colors.primary} rotationDuration={56_000} />
             </View>
           </View>
         </View>
@@ -300,20 +299,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: '50%',
     top: '50%',
-    width: 50,
-    height: 50,
-    marginLeft: -25,
-    marginTop: -25,
-    borderRadius: 25,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  planetCoreInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 1,
+    width: 64,
+    height: 64,
+    marginLeft: -32,
+    marginTop: -32,
     alignItems: 'center',
     justifyContent: 'center',
   },

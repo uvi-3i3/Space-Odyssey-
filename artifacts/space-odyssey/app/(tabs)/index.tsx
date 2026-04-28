@@ -10,7 +10,7 @@ import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
 import { Starfield } from '@/components/Starfield';
 import { ScanPulse } from '@/components/ScanPulse';
-import { RotatingPlanet } from '@/components/RotatingPlanet';
+import { PlanetIcon } from '@/components/PlanetIcon';
 import { FadeSlideIn } from '@/components/FadeSlideIn';
 import { PressableScale } from '@/components/PressableScale';
 import { GlowPulse } from '@/components/GlowPulse';
@@ -166,12 +166,8 @@ export default function PlanetScreen() {
               );
             })}
 
-            <View style={[styles.planetCore, { borderColor: colors.primary }]} pointerEvents="none">
-              <RotatingPlanet duration={48_000}>
-                <View style={[styles.planetCoreInner, { backgroundColor: colors.primary + '22', borderColor: colors.primary }]}>
-                  <Feather name="globe" size={16} color={colors.primary} />
-                </View>
-              </RotatingPlanet>
+            <View style={styles.planetCore} pointerEvents="none">
+              <PlanetIcon type="terran" size={56} glowColor={colors.primary} rotationDuration={56_000} />
             </View>
           </View>
 
@@ -418,12 +414,7 @@ const styles = StyleSheet.create({
 
   planetCore: {
     position: 'absolute', left: '50%', top: '50%',
-    width: 44, height: 44, marginLeft: -22, marginTop: -22,
-    borderRadius: 22, borderWidth: 1,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  planetCoreInner: {
-    width: 36, height: 36, borderRadius: 18, borderWidth: 1,
+    width: 56, height: 56, marginLeft: -28, marginTop: -28,
     alignItems: 'center', justifyContent: 'center',
   },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
