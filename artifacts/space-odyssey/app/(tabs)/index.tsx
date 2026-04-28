@@ -11,8 +11,6 @@ import { BlueprintGrid } from '@/components/BlueprintGrid';
 import { Starfield } from '@/components/Starfield';
 import { ScanPulse } from '@/components/ScanPulse';
 import { PlanetIcon } from '@/components/PlanetIcon';
-import { ElementIcon } from '@/components/ElementIcon';
-import { ZoneMarker } from '@/components/ZoneMarker';
 import { FadeSlideIn } from '@/components/FadeSlideIn';
 import { PressableScale } from '@/components/PressableScale';
 import { GlowPulse } from '@/components/GlowPulse';
@@ -113,8 +111,17 @@ export default function PlanetScreen() {
               const isSelected = selectedZone === zone.id;
               const onCooldown = Date.now() - (zoneState?.lastMined ?? 0) < 3000;
 
-              const tint = isSelected ? colors.secondary : colors.primary;
-              const zoneLevel = idx + 1;
+              const borderColor = isSelected
+                ? colors.secondary
+                : isUnlocked
+                ? colors.primary
+                : colors.border;
+
+              const bgColor = isSelected
+                ? colors.secondary + '22'
+                : isUnlocked
+                ? colors.primary + '12'
+                : colors.muted;
 
               return (
                 <View
@@ -128,11 +135,18 @@ export default function PlanetScreen() {
                 >
                   {isSelected && (
                     <View style={styles.pulseHost} pointerEvents="none">
-                      <ScanPulse color={colors.secondary} size={40} rings={2} duration={1600} />
+                      <ScanPulse color={colors.secondary} size={36} rings={2} duration={1600} />
                     </View>
                   )}
                   <PressableScale
-                    style={styles.zoneNode}
+                    style={[
+                      styles.zoneNode,
+                      {
+                        borderColor,
+                        backgroundColor: bgColor,
+                        borderStyle: isUnlocked ? 'solid' : 'dashed',
+                      },
+                    ]}
                     onPress={() => {
                       if (isUnlocked) {
                         setSelectedZone(isSelected ? null : zone.id);
@@ -140,16 +154,13 @@ export default function PlanetScreen() {
                       }
                     }}
                     disabled={!isUnlocked}
+                    glow={isUnlocked}
+                    glowColor={borderColor}
                     scaleTo={0.9}
                   >
-                    <ZoneMarker
-                      level={zoneLevel}
-                      size={32}
-                      active={isSelected}
-                      locked={!isUnlocked}
-                      cooldown={onCooldown}
-                      glowColor={tint}
-                    />
+                    <Text style={[styles.zoneNodeText, { color: isUnlocked ? borderColor : colors.mutedForeground }]}>
+                      {isUnlocked ? (onCooldown ? '⏱' : `Z${idx + 1}`) : '🔒'}
+                    </Text>
                   </PressableScale>
                 </View>
               );
@@ -199,13 +210,9 @@ export default function PlanetScreen() {
                 if (!elem) return null;
                 return (
                   <View key={elemId} style={[styles.elemPill, { borderColor: colors.border, backgroundColor: colors.muted }]}>
-                    <ElementIcon
-                      elementId={elem.id}
-                      symbol={elem.symbol}
-                      discovered={elem.discovered}
-                      rarityColor={getRarityColor(elem.rarity, colors)}
-                      size={18}
-                    />
+                    <Text style={[styles.elemPillSymbol, { color: colors.primary, fontFamily: 'SpaceMono_700Bold' }]}>
+                      {elem.symbol}
+                    </Text>
                     {elem.discovered && (
                       <Text style={[styles.elemPillQty, { color: colors.mutedForeground, fontFamily: 'SpaceMono_400Regular' }]}>
                         {elem.quantity}
@@ -278,25 +285,9 @@ export default function PlanetScreen() {
                     {result.success ? 'EXTRACTION SUCCESSFUL' : 'EXTRACTION FAILED'}
                   </Text>
                   {result.success && result.rewards && (
-                    <View style={styles.rewardRow}>
-                      {Object.entries(result.rewards).map(([id, qty]) => {
-                        const elem = state.elements.find(e => e.id === id);
-                        return (
-                          <View key={id} style={styles.rewardItem}>
-                            <ElementIcon
-                              elementId={id}
-                              symbol={elem?.symbol ?? id}
-                              discovered={true}
-                              rarityColor={elem ? getRarityColor(elem.rarity, colors) : colors.primary}
-                              size={16}
-                            />
-                            <Text style={[styles.resultRewards, { color: colors.foreground, fontFamily: 'SpaceMono_700Bold' }]}>
-                              +{qty}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
+                    <Text style={[styles.resultRewards, { color: colors.foreground, fontFamily: 'SpaceMono_400Regular' }]}>
+                      {Object.entries(result.rewards).map(([id, qty]) => `+${qty} ${id}`).join('  ')}
+                    </Text>
                   )}
                 </View>
               </View>
@@ -341,14 +332,9 @@ export default function PlanetScreen() {
                   <Text style={[styles.atomicNum, { color: colors.mutedForeground, fontFamily: 'SpaceMono_400Regular' }]}>
                     {elem.atomicNumber}
                   </Text>
-                  <ElementIcon
-                    elementId={elem.id}
-                    symbol={elem.symbol}
-                    discovered={elem.discovered}
-                    rarityColor={rarityColor}
-                    size={28}
-                    glow={isRare}
-                  />
+                  <Text style={[styles.elemSymbolLarge, { color: elem.discovered ? rarityColor : colors.border, fontFamily: 'SpaceMono_700Bold' }]}>
+                    {elem.discovered ? elem.symbol : '??'}
+                  </Text>
                   <Text style={[styles.elemNameSmall, { color: colors.mutedForeground }]}>
                     {elem.discovered ? elem.name.slice(0, 6).toUpperCase() : '??????'}
                   </Text>
@@ -406,22 +392,25 @@ const styles = StyleSheet.create({
 
   zoneNode: {
     position: 'absolute',
-    width: 36,
-    height: 36,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: -18,
-    marginTop: -18,
+    marginLeft: -15,
+    marginTop: -15,
   },
   pulseHost: {
     position: 'absolute',
-    width: 40,
-    height: 40,
-    left: -20,
-    top: -20,
+    width: 36,
+    height: 36,
+    left: -18,
+    top: -18,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  zoneNodeText: { fontSize: 9, fontFamily: 'Inter_700Bold' },
 
   planetCore: {
     position: 'absolute', left: '50%', top: '50%',
@@ -462,9 +451,7 @@ const styles = StyleSheet.create({
     padding: 10, borderWidth: 1, borderRadius: 6,
   },
   resultMsg: { fontSize: 11, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
-  resultRewards: { fontSize: 11 },
-  rewardRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
-  rewardItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  resultRewards: { fontSize: 11, marginTop: 2 },
 
   noSelection: {
     borderWidth: 1, borderStyle: 'dashed', borderRadius: 8,
