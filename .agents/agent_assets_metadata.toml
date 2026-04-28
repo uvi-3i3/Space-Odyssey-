@@ -24,6 +24,60 @@ uri = "file://artifacts/space-odyssey/assets/planets/terran.png"
 type = "image"
 title = "terran planet vector icon"
 
+[[generated]]
+id = "pvzK616DSEbTxzrfDE08l"
+uri = "file://artifacts/space-odyssey/assets/elements/iron.png"
+type = "image"
+title = "iron element icon"
+
+[[generated]]
+id = "bqPwr7TSAaIsbS1wQ9MMq"
+uri = "file://artifacts/space-odyssey/assets/elements/hydrogen.png"
+type = "image"
+title = "hydrogen element icon"
+
+[[generated]]
+id = "q0yhexDXNWiONtX88mH79"
+uri = "file://artifacts/space-odyssey/assets/elements/oxygen.png"
+type = "image"
+title = "oxygen element icon"
+
+[[generated]]
+id = "R-Opg00iUTmhpZiuI6Tpz"
+uri = "file://artifacts/space-odyssey/assets/elements/carbon.png"
+type = "image"
+title = "carbon element icon"
+
+[[generated]]
+id = "tcQmirGDm0GGPo6Xo-YbK"
+uri = "file://artifacts/space-odyssey/assets/elements/unknown.png"
+type = "image"
+title = "unknown element icon"
+
+[[generated]]
+id = "8XOXMsDIm1_WMCkmv-v7M"
+uri = "file://artifacts/space-odyssey/assets/zones/zone1.png"
+type = "image"
+title = "zone level 1 marker"
+
+[[generated]]
+id = "Ze_443Zl7V9RCwApaOyjP"
+uri = "file://artifacts/space-odyssey/assets/zones/zone2.png"
+type = "image"
+title = "zone level 2 marker"
+
+[[generated]]
+id = "cBFmnNbEQmomjwxtBMeYT"
+uri = "file://artifacts/space-odyssey/assets/zones/zone3.png"
+type = "image"
+title = "zone level 3 marker"
+
+[[generated]]
+id = "kLSB79lQ1RNdNTdcedTp5"
+uri = "file://artifacts/space-odyssey/assets/zones/zone4.png"
+type = "image"
+title = "zone level 4 marker"
+
 [[outputs]]
 id = "adWyT9m7xjBOsc9fhMx6H"
 uri = "file://HANDOFF.md"
