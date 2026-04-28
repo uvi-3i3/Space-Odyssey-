@@ -7,7 +7,7 @@ import * as Haptics from 'expo-haptics';
 import { useGame } from '@/context/GameContext';
 import { useColors } from '@/hooks/useColors';
 import { BlueprintGrid } from '@/components/BlueprintGrid';
-import { GameEvent } from '@/constants/gameData';
+import { EventChoice } from '@/constants/gameData';
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
   random: '#FFB800',
@@ -23,12 +23,68 @@ const EVENT_TYPE_ICONS: Record<string, string> = {
   threat: 'alert-triangle',
 };
 
+const FACTION_LABEL: Record<string, string> = {
+  zorathi: 'Zorathi',
+  krenn: 'Krenn',
+  vael: 'Vael',
+};
+
+/**
+ * Phase 5 — flatten a choice's effects into a list of short hint chips for
+ * the choice button. Resources, faction reps, stability/population/defense,
+ * and building level deltas all surface as their own chip with the right
+ * sign + colour. Returns at most 5 chips so the UI stays readable.
+ */
+function buildChoiceHints(choice: EventChoice): { key: string; text: string; positive: boolean }[] {
+  const out: { key: string; text: string; positive: boolean }[] = [];
+
+  const resources = choice.effects?.resourceChanges ?? choice.resourceChanges ?? {};
+  Object.entries(resources).forEach(([k, v]) => {
+    if (!v) return;
+    out.push({ key: `res_${k}`, text: `${v > 0 ? '+' : ''}${v} ${k}`, positive: v > 0 });
+  });
+
+  const reps = choice.effects?.reputationChanges ?? {};
+  Object.entries(reps).forEach(([fid, v]) => {
+    if (!v) return;
+    const label = FACTION_LABEL[fid] ?? fid;
+    out.push({ key: `rep_${fid}`, text: `${v > 0 ? '+' : ''}${v} ${label} rep`, positive: v > 0 });
+  });
+  if (choice.reputationChange && Object.keys(reps).length === 0) {
+    out.push({
+      key: 'rep_legacy',
+      text: `${choice.reputationChange > 0 ? '+' : ''}${choice.reputationChange} reputation`,
+      positive: choice.reputationChange > 0,
+    });
+  }
+
+  const stab = choice.effects?.stabilityChange;
+  if (stab) out.push({ key: 'stab', text: `${stab > 0 ? '+' : ''}${stab} stability`, positive: stab > 0 });
+
+  const pop = choice.effects?.populationChange;
+  if (pop) out.push({ key: 'pop', text: `${pop > 0 ? '+' : ''}${pop} population`, positive: pop > 0 });
+
+  const def = choice.effects?.defensePowerChange;
+  if (def) out.push({ key: 'def', text: `${def > 0 ? '+' : ''}${def} defense`, positive: def > 0 });
+
+  const bldgs = choice.effects?.buildingLevelChanges ?? {};
+  Object.entries(bldgs).forEach(([bid, v]) => {
+    if (!v) return;
+    const pretty = bid.replace(/_/g, ' ');
+    out.push({ key: `bldg_${bid}`, text: `${v > 0 ? '+' : ''}${v} ${pretty} lvl`, positive: v > 0 });
+  });
+
+  return out.slice(0, 5);
+}
+
 export default function EventsScreen() {
   const { state, resolveEvent, generateEvent, generatingEvent } = useGame();
   const colors = useColors();
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const dimAnim = useRef(new Animated.Value(0)).current;
 
   const paddingBottom = Platform.OS === 'web' ? 34 : 0;
+  const hasActiveEvent = state.activeEvents.length > 0;
 
   useEffect(() => {
     if (generatingEvent) {
@@ -44,6 +100,16 @@ export default function EventsScreen() {
     }
   }, [generatingEvent, pulseAnim]);
 
+  // Phase 5 — when a transmission is on screen, fade in a translucent dim
+  // overlay behind the cards so the player's eye is drawn to the decision.
+  useEffect(() => {
+    Animated.timing(dimAnim, {
+      toValue: hasActiveEvent ? 1 : 0,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }, [hasActiveEvent, dimAnim]);
+
   const handleChoice = (eventId: string, choiceId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     resolveEvent(eventId, choiceId);
@@ -53,20 +119,25 @@ export default function EventsScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <BlueprintGrid />
 
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.dimOverlay, { backgroundColor: colors.background, opacity: dimAnim }]}
+      />
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, { paddingBottom: 100 + paddingBottom }]}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.primary }]}>NARRATIVE EVENTS</Text>
+          <Text style={[styles.title, { color: colors.primary }]}>DEEP SPACE EVENTS</Text>
           <View style={styles.headerRow}>
             <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
               {state.activeEvents.length} ACTIVE · {state.completedEvents.length} RESOLVED
             </Text>
-            <View style={[styles.aiBadge, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '11' }]}>
-              <Feather name="cpu" size={9} color={colors.primary} />
-              <Text style={[styles.aiBadgeText, { color: colors.primary }]}>AI NARRATIVE</Text>
+            <View style={[styles.transmissionBadge, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '11' }]}>
+              <Feather name="radio" size={9} color={colors.primary} />
+              <Text style={[styles.transmissionBadgeText, { color: colors.primary }]}>LIVE FEED</Text>
             </View>
           </View>
         </View>
@@ -75,9 +146,9 @@ export default function EventsScreen() {
           <Animated.View style={[styles.generatingCard, { borderColor: colors.primary, backgroundColor: colors.card, opacity: pulseAnim }]}>
             <Feather name="zap" size={20} color={colors.primary} />
             <View style={styles.generatingTextCol}>
-              <Text style={[styles.generatingTitle, { color: colors.primary }]}>SCANNING DEEP SPACE...</Text>
+              <Text style={[styles.generatingTitle, { color: colors.primary }]}>TUNING ARRAY...</Text>
               <Text style={[styles.generatingDesc, { color: colors.mutedForeground }]}>
-                AI is crafting a unique narrative event for your civilization
+                Locking onto the next deep-space transmission for your civilization.
               </Text>
             </View>
           </Animated.View>
@@ -88,26 +159,16 @@ export default function EventsScreen() {
             <Feather name="radio" size={40} color={colors.mutedForeground} />
             <Text style={[styles.emptyTitle, { color: colors.mutedForeground }]}>NO INCOMING SIGNALS</Text>
             <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
-              Events occur as you explore and mine. Scan for signals to trigger AI-generated narrative encounters tailored to your civilization.
+              Tune the long-range array to receive the next chapter of your campaign and choose your colony's path.
             </Text>
             <TouchableOpacity
               style={[styles.generateBtn, { borderColor: colors.primary }]}
               onPress={() => { generateEvent(); Haptics.selectionAsync(); }}
             >
               <Feather name="zap" size={14} color={colors.primary} />
-              <Text style={[styles.generateBtnText, { color: colors.primary }]}>SCAN FOR SIGNALS</Text>
+              <Text style={[styles.generateBtnText, { color: colors.primary }]}>TUNE ARRAY</Text>
             </TouchableOpacity>
           </View>
-        )}
-
-        {state.activeEvents.length > 0 && !generatingEvent && (
-          <TouchableOpacity
-            style={[styles.scanAgainBtn, { borderColor: colors.primary + '44' }]}
-            onPress={() => { generateEvent(); Haptics.selectionAsync(); }}
-          >
-            <Feather name="zap" size={12} color={colors.primary} />
-            <Text style={[styles.scanAgainText, { color: colors.primary }]}>SCAN FOR MORE SIGNALS</Text>
-          </TouchableOpacity>
         )}
 
         {state.activeEvents.map(event => {
@@ -122,12 +183,6 @@ export default function EventsScreen() {
                     <Feather name={typeIcon as any} size={11} color={typeColor} />
                     <Text style={[styles.typeTagText, { color: typeColor }]}>{event.type.toUpperCase()}</Text>
                   </View>
-                  {String(event.id).startsWith('ai_') && (
-                    <View style={[styles.aiTag, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '11' }]}>
-                      <Feather name="cpu" size={9} color={colors.primary} />
-                      <Text style={[styles.aiTagText, { color: colors.primary }]}>AI</Text>
-                    </View>
-                  )}
                 </View>
                 <Text style={[styles.timestamp, { color: colors.mutedForeground }]}>
                   {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -141,50 +196,56 @@ export default function EventsScreen() {
 
               <Text style={[styles.choiceLabel, { color: typeColor }]}>// CHOOSE YOUR RESPONSE:</Text>
 
-              {event.choices.map((choice, index) => (
-                <TouchableOpacity
-                  key={choice.id}
-                  style={[styles.choiceBtn, { borderColor: typeColor + '55', backgroundColor: typeColor + '11' }]}
-                  onPress={() => handleChoice(event.id, choice.id)}
-                >
-                  <View style={[styles.choiceNum, { backgroundColor: typeColor + '33', borderColor: typeColor }]}>
-                    <Text style={[styles.choiceNumText, { color: typeColor }]}>{index + 1}</Text>
-                  </View>
-                  <View style={styles.choiceContent}>
-                    <Text style={[styles.choiceText, { color: colors.foreground }]}>{choice.text}</Text>
-                    {choice.resourceChanges && (
-                      <View style={styles.choicePreview}>
-                        {Object.entries(choice.resourceChanges).slice(0, 3).map(([k, v]) => (
-                          <Text key={k} style={[styles.choiceHint, { color: v > 0 ? colors.success : colors.destructive }]}>
-                            {v > 0 ? '+' : ''}{v} {k}
-                          </Text>
-                        ))}
-                      </View>
-                    )}
-                    {choice.reputationChange && (
-                      <Text style={[styles.choiceHint, { color: choice.reputationChange > 0 ? colors.success : colors.destructive }]}>
-                        Reputation {choice.reputationChange > 0 ? '+' : ''}{choice.reputationChange}
-                      </Text>
-                    )}
-                  </View>
-                  <Feather name="chevron-right" size={16} color={typeColor} />
-                </TouchableOpacity>
-              ))}
+              {event.choices.map((choice, index) => {
+                const hints = buildChoiceHints(choice);
+                return (
+                  <TouchableOpacity
+                    key={choice.id}
+                    style={[styles.choiceBtn, { borderColor: typeColor + '55', backgroundColor: typeColor + '11' }]}
+                    onPress={() => handleChoice(event.id, choice.id)}
+                  >
+                    <View style={[styles.choiceNum, { backgroundColor: typeColor + '33', borderColor: typeColor }]}>
+                      <Text style={[styles.choiceNumText, { color: typeColor }]}>{index + 1}</Text>
+                    </View>
+                    <View style={styles.choiceContent}>
+                      <Text style={[styles.choiceText, { color: colors.foreground }]}>{choice.text}</Text>
+                      {hints.length > 0 && (
+                        <View style={styles.choicePreview}>
+                          {hints.map(h => (
+                            <Text
+                              key={h.key}
+                              style={[styles.choiceHint, { color: h.positive ? colors.success : colors.destructive }]}
+                            >
+                              {h.text}
+                            </Text>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                    <Feather name="chevron-right" size={16} color={typeColor} />
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           );
         })}
 
-        {state.completedEvents.length > 0 && (
+        {state.completedEvents.length > 0 && !hasActiveEvent && !generatingEvent && (
           <View style={styles.historySection}>
             <Text style={[styles.historyTitle, { color: colors.mutedForeground }]}>
-              // COMPLETED EVENTS ({state.completedEvents.length})
+              // RESOLVED TRANSMISSIONS ({state.completedEvents.length})
             </Text>
-            {state.completedEvents.slice(0, 5).map(eventId => (
-              <View key={eventId} style={[styles.completedItem, { borderColor: colors.border }]}>
+            {state.eventLog.slice(0, 5).map(entry => (
+              <View key={entry.id} style={[styles.completedItem, { borderColor: colors.border }]}>
                 <Feather name="check-circle" size={14} color={colors.success} />
-                <Text style={[styles.completedText, { color: colors.mutedForeground }]}>
-                  Event resolved
-                </Text>
+                <View style={styles.completedTextCol}>
+                  <Text style={[styles.completedTitle, { color: colors.foreground }]} numberOfLines={1}>
+                    {entry.eventTitle}
+                  </Text>
+                  <Text style={[styles.completedSub, { color: colors.mutedForeground }]} numberOfLines={1}>
+                    {entry.choiceText}
+                  </Text>
+                </View>
               </View>
             ))}
           </View>
@@ -198,11 +259,12 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { flex: 1 },
   content: { padding: 16, gap: 16 },
+  dimOverlay: { ...StyleSheet.absoluteFillObject, opacity: 0.55 },
   header: { gap: 6 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 14, fontFamily: 'Inter_700Bold', letterSpacing: 2 },
   subtitle: { fontSize: 11, fontFamily: 'Inter_400Regular' },
-  aiBadge: {
+  transmissionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -211,7 +273,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 4,
   },
-  aiBadgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
+  transmissionBadgeText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
   generatingCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -224,16 +286,6 @@ const styles = StyleSheet.create({
   generatingTextCol: { flex: 1, gap: 4 },
   generatingTitle: { fontSize: 13, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
   generatingDesc: { fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 },
-  scanAgainBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    padding: 10,
-    borderWidth: 1,
-    borderRadius: 6,
-  },
-  scanAgainText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 1 },
   emptyState: {
     borderWidth: 1,
     borderStyle: 'dashed',
@@ -263,16 +315,6 @@ const styles = StyleSheet.create({
   },
   eventMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   eventTags: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  aiTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderRadius: 4,
-  },
-  aiTagText: { fontSize: 9, fontFamily: 'Inter_700Bold', letterSpacing: 0.5 },
   typeTag: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -314,10 +356,12 @@ const styles = StyleSheet.create({
   completedItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 10,
     padding: 10,
     borderWidth: 1,
     borderRadius: 6,
   },
-  completedText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  completedTextCol: { flex: 1, gap: 2 },
+  completedTitle: { fontSize: 12, fontFamily: 'Inter_600SemiBold' },
+  completedSub: { fontSize: 11, fontFamily: 'Inter_400Regular' },
 });

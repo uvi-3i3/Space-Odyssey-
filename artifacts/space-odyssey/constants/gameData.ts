@@ -54,6 +54,21 @@ export interface EventChoice {
   consequence: string;
   resourceChanges?: Record<string, number>;
   reputationChange?: number;
+  /**
+   * Optional rich effects, populated when an event was sourced from the
+   * pre-generated branching `STORY_TREE`. Legacy `NARRATIVE_EVENTS` entries
+   * leave this undefined and use only `resourceChanges` + `reputationChange`.
+   */
+  effects?: {
+    resourceChanges?: Record<string, number>;
+    stabilityChange?: number;
+    populationChange?: number;
+    defensePowerChange?: number;
+    reputationChanges?: Record<string, number>;
+    buildingLevelChanges?: Record<string, number>;
+  };
+  /** Pre-generated story tree only — id of the next node, or "END". */
+  nextNodeId?: string;
 }
 
 export type RelationshipTier = 'hostile' | 'neutral' | 'friendly' | 'allied';

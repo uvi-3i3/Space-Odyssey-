@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
-  Element, Building, Technology, GameEvent, Faction, Achievement,
+  Element, Building, Technology, GameEvent, EventChoice, Faction, Achievement,
   PlanetZone, RelationshipTier, deriveRelationship,
   INITIAL_ELEMENTS, INITIAL_BUILDINGS, INITIAL_TECHNOLOGIES,
   INITIAL_FACTIONS, INITIAL_ACHIEVEMENTS, PLANET_ZONES, NARRATIVE_EVENTS,
@@ -9,6 +9,7 @@ import {
   STABILITY_HIT_BY_MINING, STABILITY_BASELINE, STABILITY_REGEN_PER_TICK,
   AUTO_MINER_COST, AUTO_MINER_INTERVAL_SEC,
 } from '@/constants/gameData';
+import { STORY_TREE, StoryNode } from '@/constants/storyData';
 
 const STORAGE_KEY = '@space_odyssey_save';
 const TICK_INTERVAL = 1000;
@@ -59,6 +60,13 @@ export interface GameState {
    * reset progress mid-cycle.
    */
   autoMinerProgress: Record<string, number>;
+  /**
+   * Phase 5 — pointer into the pre-generated branching campaign in
+   * `STORY_TREE`. Each call to `generateEvent` reads this node and pushes it
+   * as the next active event. Each `resolveEvent` advances it to the chosen
+   * branch's `nextNodeId` (or `'END'` when the campaign is complete).
+   */
+  currentStoryNodeId: string;
 }
 
 export interface CombatEntry {
@@ -157,6 +165,8 @@ const initialState: GameState = {
   autoMinersOwned: 1,
   autoMinersAssigned: { zone_1: 1 },
   autoMinerProgress: { zone_1: 0 },
+  // Phase 5 — every brand-new player starts at the root of the campaign.
+  currentStoryNodeId: STORY_TREE.rootNodeId,
 };
 
 // ---------------------------------------------------------------------------
@@ -395,10 +405,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   // layout's `<SaveErrorBanner />`. Previously these were silently swallowed.
   const [lastError, setLastError] = useState<string | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Phase 3 — `stateRef` lets the autosave interval and async callbacks (AI
-  // event generation) read the latest committed state without subscribing to
-  // it as a dep. Re-subscribing on every state change broke the 30s autosave
-  // entirely (the interval was destroyed before it could ever fire).
+  // Phase 3 — `stateRef` lets the autosave interval and async callbacks read
+  // the latest committed state without subscribing to it as a dep. Re-
+  // subscribing on every state change broke the 30s autosave entirely (the
+  // interval was destroyed before it could ever fire).
   const stateRef = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
 
@@ -422,6 +432,16 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         if (parsed.autoMinersOwned == null) parsed.autoMinersOwned = 1;
         if (parsed.autoMinersAssigned == null) parsed.autoMinersAssigned = { zone_1: 1 };
         if (parsed.autoMinerProgress == null) parsed.autoMinerProgress = {};
+        // Phase 5 — back-compat: pre-Phase-5 saves have no story pointer.
+        // Drop them at the campaign root, OR clamp invalid ids to root, OR
+        // honour 'END' if they already finished.
+        if (
+          parsed.currentStoryNodeId == null ||
+          (parsed.currentStoryNodeId !== STORY_TREE.endNodeId &&
+            !STORY_TREE.nodesById[parsed.currentStoryNodeId])
+        ) {
+          parsed.currentStoryNodeId = STORY_TREE.rootNodeId;
+        }
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
         let loaded = applyOfflineProgress(parsed, cappedTime);
@@ -542,11 +562,19 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      if (Math.random() < 0.002 && prev.activeEvents.length === 0 && prev.completedEvents.length < NARRATIVE_EVENTS.length) {
-        const available = NARRATIVE_EVENTS.filter(e => !prev.completedEvents.includes(e.id) && !prev.activeEvents.find(ae => ae.id === e.id));
-        if (available.length > 0) {
-          const event = available[Math.floor(Math.random() * available.length)];
-          updated.activeEvents = [{ ...event, timestamp: Date.now() }];
+      // Phase 5 — autospawn the next pre-generated story node at a low rate
+      // so a player who never taps "Tune Array" still encounters the campaign
+      // organically. The whole branching tree is now sourced from
+      // `STORY_TREE`; the legacy `NARRATIVE_EVENTS` array is retained only as
+      // a type/example reference and is no longer surfaced to the player.
+      if (
+        Math.random() < 0.002 &&
+        prev.activeEvents.length === 0 &&
+        prev.currentStoryNodeId !== STORY_TREE.endNodeId
+      ) {
+        const node = STORY_TREE.nodesById[prev.currentStoryNodeId];
+        if (node) {
+          updated.activeEvents = [storyNodeToGameEvent(node)];
         }
       }
 
@@ -885,7 +913,17 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       };
       const critical = Math.random() < (critChanceByType[event.type] ?? 0.2);
 
-      const finalResourceChanges: Record<string, number> = { ...(choice.resourceChanges || {}) };
+      // Phase 5 — story-tree events carry rich `effects`; legacy
+      // `NARRATIVE_EVENTS` carry only `resourceChanges`/`reputationChange`.
+      // Merge both shapes into a single canonical "applied effects" bundle
+      // so the rest of the function stays uniform.
+      const eff = choice.effects ?? {};
+      const baseResourceChanges: Record<string, number> = {
+        ...(choice.resourceChanges || {}),
+        ...(eff.resourceChanges || {}),
+      };
+
+      const finalResourceChanges: Record<string, number> = { ...baseResourceChanges };
       if (critical) {
         Object.keys(finalResourceChanges).forEach(k => {
           const v = finalResourceChanges[k];
@@ -901,9 +939,14 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      const finalReputationChange = critical && choice.reputationChange
+      // Phase 5 — for the resolution log we summarise "reputation change" as
+      // the sum of all faction deltas (legacy single-faction shape ⊆ this).
+      const repChangesByFaction: Record<string, number> = { ...(eff.reputationChanges || {}) };
+      const legacyRepChange = critical && choice.reputationChange
         ? Math.round(choice.reputationChange * (choice.reputationChange > 0 ? 1.5 : 0.5))
         : (choice.reputationChange ?? 0);
+      const summedFactionRep = Object.values(repChangesByFaction).reduce((a, b) => a + b, 0);
+      const finalReputationChange = summedFactionRep + legacyRepChange;
 
       const resScore = Object.values(finalResourceChanges).reduce((acc, v) => acc + (v > 0 ? 1 : v < 0 ? -1 : 0), 0);
       const netScore = resScore * 5 + finalReputationChange;
@@ -923,28 +966,83 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         timestamp: Date.now(),
       };
 
+      // ---- Apply resource + credit deltas (clamped at floor 0). ----------
       let elements = [...prev.elements];
       let credits = prev.credits;
       Object.keys(finalResourceChanges).forEach(k => {
         const change = finalResourceChanges[k];
-        if (k === 'credits') { credits += change; return; }
-        elements = elements.map(e => e.id === k ? { ...e, quantity: Math.max(0, e.quantity + change) } : e);
+        if (k === 'credits') { credits = Math.max(0, Math.min(999999, credits + change)); return; }
+        elements = elements.map(e =>
+          e.id === k
+            ? { ...e, quantity: Math.max(0, Math.min(prev.storageCapacity, e.quantity + change)) }
+            : e,
+        );
       });
 
-      let factions = finalReputationChange ? prev.factions.map(f => ({
-        ...f, reputation: Math.max(-100, Math.min(100, f.reputation + finalReputationChange)),
-      })) : prev.factions;
+      // ---- Apply faction reputation changes. ------------------------------
+      // Story-tree shape is per-faction; legacy shape is "every faction by N".
+      let factions = prev.factions;
+      if (Object.keys(repChangesByFaction).length > 0) {
+        factions = factions.map(f => repChangesByFaction[f.id]
+          ? { ...f, reputation: Math.max(-100, Math.min(100, f.reputation + repChangesByFaction[f.id])) }
+          : f);
+      }
+      if (legacyRepChange) {
+        factions = factions.map(f => ({
+          ...f, reputation: Math.max(-100, Math.min(100, f.reputation + legacyRepChange)),
+        }));
+      }
 
       // Krenn War Fleet event reveals the Krenn Empire on the diplomacy roster.
       if (eventId === 'event_4') {
         factions = factions.map(f => f.id === 'krenn' && !f.discovered ? { ...f, discovered: true } : f);
       }
+      // Phase 5 — any story-tree event that pushes Krenn rep also discovers
+      // them, so the player can actually see the consequence on the roster.
+      if (repChangesByFaction['krenn']) {
+        factions = factions.map(f => f.id === 'krenn' && !f.discovered ? { ...f, discovered: true } : f);
+      }
+      if (repChangesByFaction['vael']) {
+        factions = factions.map(f => f.id === 'vael' && !f.discovered ? { ...f, discovered: true } : f);
+      }
+
+      // ---- Apply stability / population / defense deltas. -----------------
+      const stability = Math.max(0, Math.min(100, prev.stability + (eff.stabilityChange ?? 0)));
+      const popDelta = eff.populationChange ?? 0;
+      const population = Math.max(0, Math.min(prev.maxPopulation, prev.population + popDelta));
+      const defensePower = Math.max(0, prev.defensePower + (eff.defensePowerChange ?? 0));
+
+      // ---- Apply per-building level deltas. -------------------------------
+      // Each delta is -1..+1 from the generator, so we clamp at ≥0 and keep
+      // the rest of the building record untouched.
+      let buildings = prev.buildings;
+      const buildingChanges = eff.buildingLevelChanges ?? {};
+      if (Object.keys(buildingChanges).length > 0) {
+        buildings = buildings.map(b => buildingChanges[b.id]
+          ? { ...b, level: Math.max(0, b.level + buildingChanges[b.id]) }
+          : b);
+      }
+
+      // ---- Advance the story-tree pointer to the chosen branch. -----------
+      // `nextNodeId` is only present on story-tree events. Legacy events
+      // leave the pointer untouched.
+      const nextNodeId = choice.nextNodeId;
+      const currentStoryNodeId = nextNodeId
+        ? (nextNodeId === STORY_TREE.endNodeId || STORY_TREE.nodesById[nextNodeId]
+            ? nextNodeId
+            : prev.currentStoryNodeId)
+        : prev.currentStoryNodeId;
 
       return {
         ...prev,
         elements,
         credits,
         factions,
+        stability,
+        population,
+        defensePower,
+        buildings,
+        currentStoryNodeId,
         activeEvents: prev.activeEvents.filter(e => e.id !== eventId),
         completedEvents: [...prev.completedEvents, eventId],
         eventLog: [resolution, ...prev.eventLog].slice(0, 25),
@@ -1107,64 +1205,75 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return result;
   }, []);
 
+  /**
+   * Phase 5 — convert a pre-generated `StoryNode` from `STORY_TREE` into the
+   * runtime `GameEvent` shape. We stamp a unique id (so the same node can
+   * appear twice across a run if the player revisits a branch via prestige)
+   * and copy the rich `effects` + `nextNodeId` onto every choice so
+   * `resolveEvent` can apply them deterministically.
+   */
+  const storyNodeToGameEvent = (node: StoryNode): GameEvent => {
+    const stamp = Date.now();
+    const choices: EventChoice[] = node.choices.map(c => ({
+      id: c.id,
+      text: c.text,
+      consequence: c.consequence,
+      // Mirror the most useful effect fields onto the legacy slots so older
+      // UI hint code (resourceChanges preview, reputation hint) keeps working
+      // without having to know about the rich `effects` shape.
+      resourceChanges: c.effects.resourceChanges,
+      reputationChange: Object.values(c.effects.reputationChanges || {})
+        .reduce((a, b) => a + b, 0) || undefined,
+      effects: {
+        resourceChanges: c.effects.resourceChanges,
+        stabilityChange: c.effects.stabilityChange,
+        populationChange: c.effects.populationChange,
+        defensePowerChange: c.effects.defensePowerChange,
+        reputationChanges: c.effects.reputationChanges,
+        buildingLevelChanges: c.effects.buildingLevelChanges,
+      },
+      nextNodeId: c.nextNodeId,
+    }));
+    return {
+      id: `story_${node.id}_${stamp}`,
+      title: node.title,
+      description: node.description,
+      type: node.type,
+      choices,
+      timestamp: stamp,
+    };
+  };
+
   const generateEvent = useCallback(() => {
     if (generatingEvent) return;
+
+    // Phase 5 — pure local read out of the pre-generated story tree. No
+    // network call, no API key required at runtime. The "scanning" pulse
+    // still flashes briefly so the player feels the act of tuning in.
     setGeneratingEvent(true);
+    const SCAN_DELAY_MS = 600;
 
-    // Phase 3 — read latest state via stateRef so this callback no longer
-    // needs `state` in its dep array (which made it churn every tick).
-    const currentState = stateRef.current;
-    const elementsDiscovered = currentState.elements
-      .filter(e => e.discovered)
-      .map(e => e.symbol);
-    const buildingsBuilt = currentState.buildings
-      .filter(b => b.level > 0)
-      .map(b => b.name);
-    const technologiesResearched = currentState.technologies
-      .filter(t => t.researched)
-      .map(t => t.name);
-    const factionNames = currentState.factions.map(f => f.name);
-    const recentEventTitle = currentState.completedEvents.length > 0
-      ? currentState.activeEvents[0]?.title
-      : undefined;
+    setTimeout(() => {
+      setState(prev => {
+        // Already an active event in the queue — don't double up.
+        if (prev.activeEvents.length > 0) return prev;
 
-    fetch('/api/generate-event', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        era: currentState.era,
-        elementsDiscovered,
-        buildingsBuilt,
-        technologiesResearched,
-        credits: currentState.credits,
-        population: currentState.population,
-        factionNames,
-        recentEventTitle,
-      }),
-    })
-      .then(async res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<GameEvent>;
-      })
-      .then(event => {
-        setState(prev => ({
-          ...prev,
-          activeEvents: [...prev.activeEvents, { ...event, timestamp: Date.now() }],
-        }));
-        setGeneratingEvent(false);
-      })
-      .catch(err => {
-        console.warn('AI event generation failed, using local fallback:', err);
-        setState(prev => {
-          const available = NARRATIVE_EVENTS.filter(
-            e => !prev.completedEvents.includes(e.id) && !prev.activeEvents.find(ae => ae.id === e.id)
-          );
-          if (available.length === 0) return prev;
-          const event = available[Math.floor(Math.random() * available.length)];
-          return { ...prev, activeEvents: [...prev.activeEvents, { ...event, timestamp: Date.now() }] };
-        });
-        setGeneratingEvent(false);
+        const nodeId = prev.currentStoryNodeId;
+        if (nodeId === STORY_TREE.endNodeId) {
+          // Campaign complete. Nothing more to enqueue.
+          return prev;
+        }
+        const node = STORY_TREE.nodesById[nodeId];
+        if (!node) {
+          // Defensive — shouldn't happen because loadGame clamps to root.
+          console.warn('[GameContext] Story node missing, resetting to root:', nodeId);
+          return { ...prev, currentStoryNodeId: STORY_TREE.rootNodeId };
+        }
+        const event = storyNodeToGameEvent(node);
+        return { ...prev, activeEvents: [...prev.activeEvents, event] };
       });
+      setGeneratingEvent(false);
+    }, SCAN_DELAY_MS);
   }, [generatingEvent]);
 
   const checkAchievements = (

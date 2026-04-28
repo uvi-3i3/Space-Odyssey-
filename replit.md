@@ -21,8 +21,7 @@ Mobile-first idle RPG where you guide a civilization through planetary explorati
 - **Mining System**: 3 mining types (Safe, Aggressive, Deep Core) across 8 planet zones
 - **Building System**: 8 building types with upgrade system
 - **Tech Tree**: 10+ technologies across 3 eras
-- **AI Narrative Events**: GPT-powered dynamic events unique to each civilization's state via Expo Router API route (`app/api/generate-event+api.ts`)
-- **Static Fallback Events**: 5 static branching events used when AI is unavailable
+- **Deep Space Events**: Pre-generated branching campaign tree (5 chapters, 68 nodes, 2 choices each, ≥60% unique branches) read locally from `constants/storyData.ts` — no runtime network call.
 - **Combat System**: Turn-based fleet battles with 3 strategies
 - **Espionage System**: 4 mission types with varying success rates
 - **3 Factions**: Zorathi, Krenn, Vael with reputation system
@@ -32,12 +31,13 @@ Mobile-first idle RPG where you guide a civilization through planetary explorati
 - **Offline Progress**: Idle resource generation while away
 - **Persistence**: AsyncStorage-based save system
 
-### AI Integration
-- Uses Replit AI Integrations (OpenAI) via an Expo Router API route
-- `app/api/generate-event+api.ts` — server-side handler using `AI_INTEGRATIONS_OPENAI_BASE_URL` and `AI_INTEGRATIONS_OPENAI_API_KEY`
-- Enabled by `"output": "server"` in `app.json` web config
-- Falls back to static events on API failure
-- AI events tagged with "AI" badge in the Events tab UI
+### Deep Space Events Pipeline (Phase 5)
+- **Generated once, shipped flat.** A one-shot script (`scripts/src/generateStoryTree.ts`) calls Gemini (preferred), the Replit OpenAI integration, or a raw `OPENAI_API_KEY` and writes the entire branching campaign to `artifacts/space-odyssey/constants/storyData.ts`. Per-chapter responses are cached under `scripts/.cache/storytree/` so reruns are instant.
+- **Run with**: `pnpm --filter @workspace/scripts run generate:story` (set `GEMINI_API_KEY`, or use the OpenAI integration, or `OPENAI_API_KEY`). Add `--force` to ignore the cache.
+- **Validator** enforces 2 choices per node, ≥60% unique branches per chapter, valid building/element/faction ids, and clamps every effect into the safe ranges.
+- **Runtime**: `GameContext` reads `STORY_TREE.nodesById[state.currentStoryNodeId]` — no network call. `resolveEvent` applies the rich `StoryEffects` (resources, stability, population, defense, faction reputations, building level deltas) via `setState(prev => ...)` and advances `currentStoryNodeId` to the chosen branch's `nextNodeId` (or `'END'`).
+- **No "AI" copy in the UI** — the screen is now "Deep Space Events" with a "LIVE FEED" badge and per-choice effect chips (resources, faction reps, stability, population, defense, building deltas). A translucent dim overlay fades in behind the cards when a transmission is active.
+- The legacy `app/api/generate-event+api.ts` route has been removed. The legacy `NARRATIVE_EVENTS` array is retained in `gameData.ts` only as a type/example reference and is no longer surfaced.
 
 ### Key Files
 - `artifacts/space-odyssey/context/GameContext.tsx` — Core game state + all game logic
@@ -56,7 +56,7 @@ Reusable primitives in `artifacts/space-odyssey/components/`:
 - `ScanPulse.tsx` — concentric scan ring around selected zone
 - `PressableScale.tsx` — universal button press: scale-down + optional glow halo
 - `FadeSlideIn.tsx` — entrance animation (opacity + translate) with delay/offset
-- `Typewriter.tsx` — character-by-character reveal for AI narrative titles
+- `Typewriter.tsx` — character-by-character reveal for Deep Space Event titles
 - `Shimmer.tsx` — diagonal sheen for rare/epic/legendary elements
 - `GlowPulse.tsx` — slow breathing glow halo for hero CTAs (engage, prestige, active research)
 - `AnimatedTabIcon.tsx` — tab bar icon with spring scale + halo glow on focus
@@ -73,7 +73,7 @@ Events now feel like real consequential decisions rather than silent transaction
 Integration coverage:
 - Planet (`app/(tabs)/index.tsx`) — starfield, rotating planet, scan pulse, zone node press, mining buttons, panel/banner fade-in, codex shimmer
 - Command (`app/(tabs)/command.tsx`) — section pills, era chips, building cards, expand details, construct/upgrade/research buttons, active research glow pulse
-- Intel (`app/(tabs)/intel.tsx`) — section pills, faction cards, strategy cards, engage fleet glow, mission cards, deep-scan typewriter on AI events, prestige glow, daily-claim button
+- Intel (`app/(tabs)/intel.tsx`) — section pills, faction cards, strategy cards, engage fleet glow, mission cards, deep-scan typewriter on Deep Space Events, prestige glow, daily-claim button
 - Tab bar (`app/(tabs)/_layout.tsx`) — animated focused tab icon
 
 ## Stack

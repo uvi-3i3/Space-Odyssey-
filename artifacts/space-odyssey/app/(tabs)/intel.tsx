@@ -228,8 +228,8 @@ export default function IntelScreen() {
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.foreground }]}>SIGNAL INTERCEPTS</Text>
               <View style={[styles.aiBadge, { borderColor: colors.secondary, backgroundColor: colors.secondary + '14' }]}>
-                <Feather name="cpu" size={9} color={colors.secondary} />
-                <Text style={[styles.aiBadgeText, { color: colors.secondary }]}>AI NARRATIVE</Text>
+                <Feather name="radio" size={9} color={colors.secondary} />
+                <Text style={[styles.aiBadgeText, { color: colors.secondary }]}>LIVE FEED</Text>
               </View>
             </View>
 
@@ -237,9 +237,9 @@ export default function IntelScreen() {
               <Animated.View style={[styles.generatingCard, { borderColor: colors.primary, backgroundColor: colors.card, opacity: pulseAnim }]}>
                 <Feather name="radio" size={18} color={colors.primary} />
                 <View style={{ flex: 1, gap: 3 }}>
-                  <Text style={[styles.generatingTitle, { color: colors.primary }]}>SCANNING DEEP SPACE...</Text>
+                  <Text style={[styles.generatingTitle, { color: colors.primary }]}>TUNING ARRAY...</Text>
                   <Text style={[styles.generatingDesc, { color: colors.mutedForeground }]}>
-                    AI is generating a unique narrative event for your civilization
+                    Locking onto the next deep-space transmission for your civilization.
                   </Text>
                 </View>
               </Animated.View>
@@ -250,7 +250,7 @@ export default function IntelScreen() {
                 <Feather name="radio" size={32} color={colors.mutedForeground} />
                 <Text style={[styles.emptyTitle, { color: colors.mutedForeground }]}>NO SIGNALS ACQUIRED</Text>
                 <Text style={[styles.emptyDesc, { color: colors.mutedForeground }]}>
-                  Events occur as you explore and mine. Initiate a deep-space scan for AI-generated narrative encounters.
+                  Tune the long-range array to receive the next chapter of your campaign and choose your colony's path.
                 </Text>
                 <PressableScale
                   style={[styles.scanBtn, { borderColor: colors.primary, backgroundColor: colors.primary + '14' }]}
@@ -260,7 +260,7 @@ export default function IntelScreen() {
                   scaleTo={0.96}
                 >
                   <Feather name="zap" size={13} color={colors.primary} />
-                  <Text style={[styles.scanBtnText, { color: colors.primary }]}>INITIATE DEEP SCAN</Text>
+                  <Text style={[styles.scanBtnText, { color: colors.primary }]}>TUNE ARRAY</Text>
                 </PressableScale>
               </View>
             )}
@@ -272,14 +272,17 @@ export default function IntelScreen() {
                 scaleTo={0.97}
               >
                 <Feather name="zap" size={11} color={colors.primary} />
-                <Text style={[styles.scanAgainText, { color: colors.primary }]}>SCAN FOR MORE SIGNALS</Text>
+                <Text style={[styles.scanAgainText, { color: colors.primary }]}>TUNE FOR MORE SIGNALS</Text>
               </PressableScale>
             )}
 
             {state.activeEvents.map((event, eventIdx) => {
               const typeColor = EVENT_TYPE_COLORS[event.type] ?? colors.primary;
               const typeIcon = EVENT_TYPE_ICONS[event.type] ?? 'radio';
-              const isAI = String(event.id).startsWith('ai_');
+              // Phase 5 — every active event is now sourced from the
+              // pre-generated story tree (id prefix `story_`). Run them
+              // through the typewriter for a dramatic title reveal.
+              const isStoryEvent = String(event.id).startsWith('story_');
 
               return (
                 <FadeSlideIn key={event.id} delay={eventIdx * 60} duration={420} offset={14}>
@@ -293,12 +296,6 @@ export default function IntelScreen() {
                         <Feather name={typeIcon as any} size={9} color={typeColor} />
                         <Text style={[styles.typeTagText, { color: typeColor }]}>{event.type.toUpperCase()}</Text>
                       </View>
-                      {isAI && (
-                        <View style={[styles.aiTag, { borderColor: colors.secondary, backgroundColor: colors.secondary + '14' }]}>
-                          <Feather name="cpu" size={8} color={colors.secondary} />
-                          <Text style={[styles.aiTagText, { color: colors.secondary }]}>AI</Text>
-                        </View>
-                      )}
                       <Text style={[styles.eventTime, { color: colors.mutedForeground, fontFamily: 'SpaceMono_400Regular' }]}>
                         {new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </Text>
@@ -306,7 +303,7 @@ export default function IntelScreen() {
 
                     <Typewriter
                       text={event.title}
-                      enabled={isAI}
+                      enabled={isStoryEvent}
                       speed={14}
                       style={[styles.eventTitle, { color: colors.foreground }]}
                     />
