@@ -40,7 +40,6 @@ export interface GameState {
   units: FleetUnit[];
   storageCapacity: number;
   activeTab: string;
-  planetType: string;
 }
 
 export interface CombatEntry {
@@ -124,7 +123,6 @@ const initialState: GameState = {
   units: DEFAULT_UNITS,
   storageCapacity: 1000,
   activeTab: 'planet',
-  planetType: 'TERRAN',
 };
 
 interface GameContextType {
@@ -145,7 +143,6 @@ interface GameContextType {
   getTech: (techId: string) => Technology | undefined;
   generateEvent: () => void;
   generatingEvent: boolean;
-  setPlanetType: (type: string) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -172,7 +169,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       if (saved) {
         const parsed = JSON.parse(saved) as GameState;
         if (!parsed.eventLog) parsed.eventLog = [];
-        if (!parsed.planetType) parsed.planetType = 'TERRAN';
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
         const loaded = applyOfflineProgress(parsed, cappedTime);
@@ -755,10 +751,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(saveInterval);
   }, [state, saveGame]);
 
-  const setPlanetType = useCallback((type: string) => {
-    setState(prev => ({ ...prev, planetType: type }));
-  }, []);
-
   return (
     <GameContext.Provider value={{
       state,
@@ -778,7 +770,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       getTech,
       generateEvent,
       generatingEvent,
-      setPlanetType,
     }}>
       {children}
     </GameContext.Provider>

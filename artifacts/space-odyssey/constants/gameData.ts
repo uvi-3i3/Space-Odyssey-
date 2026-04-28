@@ -212,18 +212,3 @@ export const NARRATIVE_EVENTS: GameEvent[] = [
     timestamp: 0
   },
 ];
-
-export const PLANET_TYPES = [
-  'TERRAN',
-  'DESERT',
-  'ICEWORLD',
-  'VOLCANIC',
-  'GAS_GIANT',
-  'TOXIC',
-  'CRYSTALLINE',
-  'OCEANIC',
-  'METALLIC',
-  'VOID',
-  'BARREN',
-  'ALIEN',
-] as const;
