@@ -259,6 +259,25 @@ export default function CommandScreen() {
                         </View>
                       )}
 
+                      {/* Phase 6 — at max level there is no upgrade button.
+                          Just a celebratory gold "MAXED" banner that makes the
+                          accomplishment feel earned. */}
+                      {isMaxLevel && (
+                        <GlowPulse color={colors.legendary} duration={2400} min={0.18} max={0.5}>
+                          <View style={[styles.maxedBanner, { borderColor: colors.legendary, backgroundColor: colors.legendary + '14' }]}>
+                            <Feather name="award" size={16} color={colors.legendary} />
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.maxedTitle, { color: colors.legendary, fontFamily: 'SpaceMono_700Bold' }]}>
+                                MAXED · LV{building.level}
+                              </Text>
+                              <Text style={[styles.maxedSub, { color: colors.mutedForeground }]}>
+                                Fully optimized. No further upgrades possible.
+                              </Text>
+                            </View>
+                          </View>
+                        </GlowPulse>
+                      )}
+
                       <View style={styles.actionRow}>
                         {building.level === 0 && (
                           <PressableScale
@@ -285,12 +304,6 @@ export default function CommandScreen() {
                             <Feather name="arrow-up" size={13} color={canAfford ? '#FFFFFF' : colors.mutedForeground} />
                             <Text style={[styles.actionBtnText, { color: canAfford ? '#FFFFFF' : colors.mutedForeground }]}>UPGRADE</Text>
                           </PressableScale>
-                        )}
-                        {isMaxLevel && (
-                          <View style={[styles.actionBtn, { borderColor: colors.secondary, backgroundColor: colors.secondary + '14' }]}>
-                            <Feather name="check" size={13} color={colors.secondary} />
-                            <Text style={[styles.actionBtnText, { color: colors.secondary }]}>MAX LEVEL</Text>
-                          </View>
                         )}
                         {building.level > 0 && (
                           <PressableScale
@@ -488,6 +501,16 @@ const styles = StyleSheet.create({
     gap: 6, paddingVertical: 9, borderRadius: 5, borderWidth: 1.5,
   },
   actionBtnText: { fontSize: 11, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  maxedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderWidth: 1.5,
+    borderRadius: 6,
+  },
+  maxedTitle: { fontSize: 12, letterSpacing: 1.5 },
+  maxedSub: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2 },
   demolishBtn: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 5, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 
   techCard: { borderWidth: 1, borderRadius: 8, padding: 14, gap: 8, overflow: 'hidden' },

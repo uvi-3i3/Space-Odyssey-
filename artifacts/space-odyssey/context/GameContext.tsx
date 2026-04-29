@@ -8,6 +8,9 @@ import {
   StabilityTier, getStabilityTier, getStabilityProductionMultiplier,
   STABILITY_HIT_BY_MINING, STABILITY_BASELINE, STABILITY_REGEN_PER_TICK,
   AUTO_MINER_COST, AUTO_MINER_INTERVAL_SEC,
+  CommanderBackground, CrewMember, FactionModifier, GameStage, getStartingCrew,
+  ENERGY_BASE_MAX, ENERGY_PER_HABITAT_LEVEL, ENERGY_REGEN_PER_SEC,
+  ENERGY_COST_BY_MINING, ENERGY_COST_PER_AUTOMINER_YIELD, COMBAT_COOLDOWN_MS,
 } from '@/constants/gameData';
 import { STORY_TREE, StoryNode } from '@/constants/storyData';
 
@@ -67,6 +70,32 @@ export interface GameState {
    * branch's `nextNodeId` (or `'END'` when the campaign is complete).
    */
   currentStoryNodeId: string;
+  // -------------------------------------------------------------------------
+  // Phase 6 — Commander identity, energy economy, story flags, crew, modifiers.
+  // -------------------------------------------------------------------------
+  /** Onboarding output. Empty string until the player completes the intro. */
+  commanderName: string;
+  planetName: string;
+  commanderBackground: CommanderBackground | null;
+  /** Whether onboarding has been completed (gates the entire app). */
+  onboarded: boolean;
+  /** Progression gate: 0=Survival, 1=Shelter, 2=Signals, 3=Research, 4=Contact. */
+  gameStage: GameStage;
+  /** Commander energy. Manual mining and Auto-Miners both draw on this pool. */
+  energy: number;
+  maxEnergy: number;
+  /** Persistent boolean tags set by event choices and milestones. */
+  worldFlags: string[];
+  /** Resolved consequence reports awaiting the player's read (Phase 3 spec). */
+  eventReports: GameEvent[];
+  /** Crew members. Always includes Kael. Background determines second member. */
+  crew: CrewMember[];
+  /** Active timer-bound buffs/debuffs against specific factions. */
+  factionModifiers: FactionModifier[];
+  /** Last-session offline narrative report; cleared after the modal is dismissed. */
+  lastReturnEvent: string | null;
+  /** factionId -> unix ms when the next combat is allowed. */
+  combatCooldowns: Record<string, number>;
 }
 
 export interface CombatEntry {
@@ -167,6 +196,20 @@ const initialState: GameState = {
   autoMinerProgress: { zone_1: 0 },
   // Phase 5 — every brand-new player starts at the root of the campaign.
   currentStoryNodeId: STORY_TREE.rootNodeId,
+  // Phase 6 — Onboarding starts blank; OnboardingFlow seeds these on Begin.
+  commanderName: '',
+  planetName: '',
+  commanderBackground: null,
+  onboarded: false,
+  gameStage: 0,
+  energy: ENERGY_BASE_MAX,
+  maxEnergy: ENERGY_BASE_MAX,
+  worldFlags: [],
+  eventReports: [],
+  crew: [],
+  factionModifiers: [],
+  lastReturnEvent: null,
+  combatCooldowns: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -360,6 +403,124 @@ function deployedAutoMinerCount(s: GameState): number {
   return Object.values(s.autoMinersAssigned).reduce((a, b) => a + (b || 0), 0);
 }
 
+/** Format a millisecond duration as "Xh Ym" or "Ym Zs". */
+function formatRemaining(ms: number): string {
+  if (ms <= 0) return 'ready';
+  const totalSec = Math.ceil(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const totalMin = Math.ceil(totalSec / 60);
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Energy regen, gameStage progression, modifier expiry, return-event.
+// All pure (state-in / state-out). Composed inside tick + applyOfflineProgress.
+// ---------------------------------------------------------------------------
+
+/** Restore Commander energy at the constant per-second rate, capped at maxEnergy. */
+function applyEnergyRegen(s: GameState, seconds: number): GameState {
+  if (seconds <= 0 || s.energy >= s.maxEnergy) return s;
+  const next = Math.min(s.maxEnergy, s.energy + ENERGY_REGEN_PER_SEC * seconds);
+  if (next === s.energy) return s;
+  return { ...s, energy: next };
+}
+
+/** Strip out any factionModifier whose expiresAt has already passed. */
+function expireFactionModifiers(s: GameState, nowMs: number): GameState {
+  if (s.factionModifiers.length === 0) return s;
+  const live = s.factionModifiers.filter(m => m.expiresAt > nowMs);
+  if (live.length === s.factionModifiers.length) return s;
+  return { ...s, factionModifiers: live };
+}
+
+/**
+ * Advance gameStage automatically when milestone conditions are met.
+ * Each stage transition writes a one-time worldFlag so the UI / story tree
+ * can react to the moment it happened (e.g. "first signal" intro).
+ *
+ *  0 Survival  — default (just landed)
+ *  1 Shelter   — first non-mine building constructed
+ *  2 Signals   — habitat built (people can live here)
+ *  3 Research  — first technology researched
+ *  4 Contact   — first faction interaction (combat / espionage / event resolved)
+ */
+function advanceGameStage(s: GameState): GameState {
+  const flags = new Set(s.worldFlags);
+  let stage: GameStage = s.gameStage;
+  const builtCount = s.buildings.filter(b => b.level > 0).length;
+  const hasNonMine = s.buildings.some(b => b.level > 0 && b.type !== 'mine');
+  const hasHabitat = s.buildings.some(b => b.id === 'habitat_basic' && b.level > 0);
+  const hasResearched = s.technologies.some(t => t.researched);
+  const hasFactionContact =
+    s.combatLog.length > 0 ||
+    s.espionageLog.length > 0 ||
+    s.factions.some(f => f.reputation !== 0);
+
+  if (builtCount >= 1 && hasNonMine && stage < 1) {
+    stage = 1; flags.add('stage_shelter_reached');
+  }
+  if (hasHabitat && stage < 2) {
+    stage = 2; flags.add('stage_signals_reached');
+  }
+  if (hasResearched && stage < 3) {
+    stage = 3; flags.add('stage_research_reached');
+  }
+  if (hasFactionContact && stage < 4) {
+    stage = 4; flags.add('stage_contact_reached');
+  }
+
+  if (stage === s.gameStage && flags.size === s.worldFlags.length) return s;
+  return { ...s, gameStage: stage, worldFlags: Array.from(flags) };
+}
+
+/**
+ * Build a 1-3 paragraph narrative summary of what happened while the player
+ * was away. Uses crew names + concrete numbers, no jargon. Returns null when
+ * the offline window is too short to be worth surfacing.
+ */
+function buildReturnEventNarrative(before: GameState, after: GameState, seconds: number): string | null {
+  // 4-hour threshold matches the spec.
+  if (seconds < 4 * 3600) return null;
+  const hours = Math.round(seconds / 3600);
+  const hoursLabel = hours === 1 ? '1 hour' : `${hours} hours`;
+  const elementGains = after.elements
+    .map(e => {
+      const prev = before.elements.find(x => x.id === e.id);
+      const delta = e.quantity - (prev?.quantity ?? 0);
+      return { name: e.name, delta };
+    })
+    .filter(x => x.delta > 0)
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, 3);
+  const creditDelta = Math.floor(after.credits - before.credits);
+  const stabilityDelta = Math.round(after.stability - before.stability);
+
+  const lead = after.crew.find(c => c.role === 'engineer')?.name ?? 'Your engineer';
+  const planet = after.planetName || 'the colony';
+
+  const lines: string[] = [];
+  lines.push(`While you were away (${hoursLabel}), ${planet} kept running.`);
+  if (elementGains.length > 0) {
+    const haul = elementGains.map(g => `+${g.delta} ${g.name}`).join(', ');
+    lines.push(`${lead} reports the Auto-Miner crews logged a steady haul: ${haul}.`);
+  } else {
+    lines.push(`${lead} reports the Auto-Miner crews idled — vaults are full or no rigs were deployed.`);
+  }
+  if (creditDelta > 0) {
+    lines.push(`Trade and salvage netted ${creditDelta} credits in your absence.`);
+  }
+  if (stabilityDelta > 5) {
+    lines.push(`Morale recovered noticeably while the dust settled.`);
+  } else if (stabilityDelta < -5) {
+    lines.push(`Morale slipped while you were gone — people are looking for direction.`);
+  }
+  lines.push('Welcome back, Commander.');
+  return lines.join('\n\n');
+}
+
 interface GameContextType {
   state: GameState;
   mineZone: (zoneId: string, miningType: 'safe' | 'aggressive' | 'deep') => { success: boolean; rewards: Record<string, number>; message: string };
@@ -394,6 +555,19 @@ interface GameContextType {
   deployedAutoMiners: number;
   /** Stability tier ('high' | 'medium' | 'low' | 'critical') — derived live. */
   stabilityTier: StabilityTier;
+  // Phase 6 — Onboarding + return-event + cooldown helpers.
+  /** Called by OnboardingFlow when the player finishes the intro. */
+  completeOnboarding: (input: { commanderName: string; planetName: string; background: CommanderBackground }) => void;
+  /** Acknowledge and clear the In-Your-Absence narrative. */
+  dismissReturnEvent: () => void;
+  /** Add a worldFlag (idempotent). */
+  addWorldFlag: (flag: string) => void;
+  /** Returns ms remaining of cooldown for a faction (0 if none). */
+  getCombatCooldownRemaining: (factionId: string) => number;
+  /** Same value formatted as "Xh Ym". */
+  formatCooldown: (ms: number) => string;
+  /** Storage fill ratio across all elements, 0..1. */
+  storageFillRatio: number;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -442,9 +616,34 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         ) {
           parsed.currentStoryNodeId = STORY_TREE.rootNodeId;
         }
+        // Phase 6 — back-compat for the new identity / energy / progression
+        // fields. Older saves predate them and would otherwise crash UI.
+        if (parsed.commanderName == null) parsed.commanderName = '';
+        if (parsed.planetName == null) parsed.planetName = '';
+        if (parsed.commanderBackground == null) parsed.commanderBackground = null;
+        // Skip onboarding for any save that already has progress — it would be
+        // rude to ask returning players to re-name their colony.
+        if (parsed.onboarded == null) {
+          parsed.onboarded = parsed.totalPlayTime > 60 || parsed.buildings.some(b => b.level > 0);
+        }
+        if (parsed.gameStage == null) parsed.gameStage = 0;
+        if (parsed.maxEnergy == null) parsed.maxEnergy = ENERGY_BASE_MAX;
+        if (parsed.energy == null) parsed.energy = parsed.maxEnergy;
+        if (parsed.worldFlags == null) parsed.worldFlags = [];
+        if (parsed.eventReports == null) parsed.eventReports = [];
+        if (parsed.crew == null) parsed.crew = [];
+        if (parsed.factionModifiers == null) parsed.factionModifiers = [];
+        if (parsed.lastReturnEvent == null) parsed.lastReturnEvent = null;
+        if (parsed.combatCooldowns == null) parsed.combatCooldowns = {};
+
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
+        // Phase 6 — capture pre-offline snapshot so we can write a narrative
+        // "In Your Absence" report rather than dump raw deltas at the player.
+        const preOffline = parsed;
         let loaded = applyOfflineProgress(parsed, cappedTime);
+        const narrative = buildReturnEventNarrative(preOffline, loaded, cappedTime);
+        if (narrative) loaded = { ...loaded, lastReturnEvent: narrative };
         // Re-derive every tech-driven multiplier and unlock state from the
         // saved tech list, in case formulas changed since the save was written.
         loaded = applyProgression(loaded);
@@ -501,6 +700,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     // helpers used inside the live tick so behaviour is identical.
     updated = applyStabilityRegen(updated, seconds);
     updated = applyAutoMinerProduction(updated, seconds);
+    // Phase 6 — Energy fully restores during long offline windows. Modifiers
+    // expire normally. gameStage gets re-checked in case milestones were met
+    // before the player ever played online (e.g. researched-on-prestige).
+    updated = applyEnergyRegen(updated, seconds);
+    updated = expireFactionModifiers(updated, Date.now());
+    updated = advanceGameStage(updated);
     return updated;
   };
 
@@ -588,6 +793,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       // helpers are pure and capacity-aware.
       updated = applyAutoMinerProduction(updated, 1);
       updated = applyStabilityRegen(updated, 1);
+      // Phase 6 — energy regen, modifier expiry, and stage advancement run
+      // every tick. All three are no-ops when nothing is happening.
+      updated = applyEnergyRegen(updated, 1);
+      updated = expireFactionModifiers(updated, Date.now());
+      updated = advanceGameStage(updated);
       return updated;
     });
   }, []);
@@ -646,6 +856,22 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const zone = prev.planetZones.find(z => z.id === zoneId);
       if (!zone || !zone.unlocked) return prev;
 
+      // Phase 6 — energy gate. The Commander cannot personally lead a mining
+      // op without enough stamina. Auto-Miners still work; this gate only
+      // applies to manual extraction.
+      const energyCost = ENERGY_COST_BY_MINING[miningType];
+      if (prev.energy < energyCost) {
+        result = { success: false, rewards: {}, message: `Not enough energy (need ${energyCost}). Rest, or wait for regen.` };
+        return prev;
+      }
+      // Phase 6 — vault-full lockout. Mining when storage is at 100% just
+      // dumps the haul on the ground; refuse the action with a clear message.
+      const storageFull = prev.elements.every(e => e.quantity >= prev.storageCapacity);
+      if (storageFull) {
+        result = { success: false, rewards: {}, message: 'Vaults are full. Build storage or trade resources before mining more.' };
+        return prev;
+      }
+
       const now = Date.now();
       const cooldown = miningType === 'safe' ? 3000 : miningType === 'aggressive' ? 2000 : 5000;
       if (now - zone.lastMined < cooldown) {
@@ -668,6 +894,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const newStability = clamp(prev.stability - stabilityHit, 0, 100);
       const stabSuffix = stabilityHit > 0 ? ` (-${stabilityHit} stability)` : '';
 
+      // Phase 6 — Spend energy whether or not the op pays out.
+      const newEnergy = Math.max(0, prev.energy - energyCost);
+
       if (Math.random() < risk) {
         const failMsg = miningType === 'deep'
           ? 'Cave collapse! Nothing recovered.'
@@ -676,6 +905,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         return {
           ...prev,
           stability: newStability,
+          energy: newEnergy,
           planetZones: prev.planetZones.map(z => z.id === zoneId ? { ...z, lastMined: now } : z),
         };
       }
@@ -705,7 +935,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const updatedAchievements = checkAchievements(prev.achievements, elems, prev.buildings, prev.technologies);
 
       result = { success: true, rewards, message: 'Mined successfully!' + stabSuffix };
-      return { ...prev, stability: newStability, elements: elems, planetZones: zones, achievements: updatedAchievements };
+      return { ...prev, stability: newStability, energy: newEnergy, elements: elems, planetZones: zones, achievements: updatedAchievements };
     });
     return result;
   }, []);
@@ -792,6 +1022,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const storageCapacity = prev.storageCapacity + (buildingId === 'storage_basic' ? 500 : 0);
       const maxPopulation = prev.maxPopulation + (buildingId === 'habitat_basic' ? 20 : 0);
       const defensePower = prev.defensePower + (buildingId === 'defense_basic' ? 25 : 0);
+      // Phase 6 — Habitat Domes also raise the Commander's energy ceiling.
+      // More people on-site means a deeper support structure for the leader.
+      const maxEnergy = prev.maxEnergy + (buildingId === 'habitat_basic' ? ENERGY_PER_HABITAT_LEVEL : 0);
       // Building a Trade Nexus opens commerce with the Vael Merchants.
       const factions = buildingId === 'trade_post'
         ? prev.factions.map(f => f.id === 'vael' && !f.discovered ? { ...f, discovered: true } : f)
@@ -799,7 +1032,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const updatedAchievements = checkAchievements(prev.achievements, elements, buildings, prev.technologies);
 
       result = { success: true, message: 'Construction complete!' };
-      return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower, factions, achievements: updatedAchievements };
+      return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower, maxEnergy, factions, achievements: updatedAchievements };
     });
     return result;
   }, []);
@@ -830,12 +1063,13 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       let storageCapacity = prev.storageCapacity;
       let maxPopulation = prev.maxPopulation;
       let defensePower = prev.defensePower;
+      let maxEnergy = prev.maxEnergy;
       if (buildingId === 'storage_basic') storageCapacity += 500;
-      if (buildingId === 'habitat_basic') maxPopulation += 20;
+      if (buildingId === 'habitat_basic') { maxPopulation += 20; maxEnergy += ENERGY_PER_HABITAT_LEVEL; }
       if (buildingId === 'defense_basic') defensePower += 25;
 
       result = { success: true, message: 'Upgrade complete!' };
-      return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower };
+      return { ...prev, elements, credits, buildings, storageCapacity, maxPopulation, defensePower, maxEnergy };
     });
     return result;
   }, []);
@@ -1055,6 +1289,38 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     let entry: CombatEntry | null = null;
     setState(prev => {
       const faction = prev.factions.find(f => f.id === factionId);
+      // Phase 6 — combat cooldown gate. Once engaged, the same faction can't
+      // be hit again for 4 hours regardless of outcome. Retreating doesn't
+      // trigger the cooldown.
+      const now = Date.now();
+      const cdUntil = prev.combatCooldowns[factionId] ?? 0;
+      if (strategy !== 'retreat' && cdUntil > now) {
+        const remaining = cdUntil - now;
+        entry = {
+          id: now.toString(),
+          factionId,
+          type: 'attack',
+          outcome: 'draw',
+          timestamp: now,
+          details: `Fleet recharging — ${formatRemaining(remaining)}.`,
+        };
+        return prev;
+      }
+      // Phase 6 — gate aggressive action behind actually having military.
+      // The Commander cannot order an attack with zero recruited units AND
+      // no Defense Tower; show a clear narrative rejection instead.
+      const hasMilitary = prev.units.some(u => u.count > 0) || prev.defensePower > 10;
+      if (strategy === 'attack' && !hasMilitary) {
+        entry = {
+          id: now.toString(),
+          factionId,
+          type: 'attack',
+          outcome: 'draw',
+          timestamp: now,
+          details: 'No fleet to deploy. Recruit units or build a Defense Tower first.',
+        };
+        return prev;
+      }
       const rawPower = prev.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + prev.defensePower;
       const playerPower = rawPower * prev.combatMultiplier;
 
@@ -1103,7 +1369,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const updatedAchievements = outcome === 'win'
         ? checkAchievements(prev.achievements, prev.elements, prev.buildings, prev.technologies, 'combat')
         : prev.achievements;
-      return { ...prev, factions, combatLog: [entry, ...prev.combatLog].slice(0, 20), achievements: updatedAchievements };
+      // Phase 6 — set the cooldown after a real engagement (not retreat).
+      const newCooldowns = strategy === 'retreat'
+        ? prev.combatCooldowns
+        : { ...prev.combatCooldowns, [factionId]: now + COMBAT_COOLDOWN_MS };
+      return { ...prev, factions, combatLog: [entry, ...prev.combatLog].slice(0, 20), combatCooldowns: newCooldowns, achievements: updatedAchievements };
     });
     return entry as unknown as CombatEntry;
   }, []);
@@ -1336,6 +1606,77 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   // values from the same source of truth.
   const stabilityTier = getStabilityTier(state.stability);
   const deployedAutoMiners = deployedAutoMinerCount(state);
+  // Phase 6 — derived: max ratio across all elements. Drives the HUD pulse.
+  const storageFillRatio = state.elements.length === 0 ? 0
+    : Math.max(...state.elements.map(e => e.quantity / state.storageCapacity));
+
+  // Phase 6 — Onboarding writes the entire identity bundle in one shot.
+  // Background grants pre-built structures, flags, or units.
+  const completeOnboarding = useCallback(
+    ({ commanderName, planetName, background }: { commanderName: string; planetName: string; background: CommanderBackground }) => {
+      setState(prev => {
+        const crew = getStartingCrew(background);
+        let buildings = prev.buildings;
+        let factions = prev.factions;
+        let units = prev.units;
+        let technologies = prev.technologies;
+        const flags = new Set(prev.worldFlags);
+        flags.add(`background_${background}`);
+        if (background === 'soldier') {
+          // +2 Scouts on day 1, plus a discount applied via a worldFlag the
+          // construct path inspects later (out of scope for this commit).
+          units = prev.units.map(u =>
+            u.id === 'scout' ? { ...u, count: u.count + 2 } : u,
+          );
+          flags.add('soldier_defense_discount');
+        } else if (background === 'scientist') {
+          // Lab pre-built at level 1, basic mining pre-researched.
+          buildings = prev.buildings.map(b =>
+            b.id === 'lab_basic' ? { ...b, level: Math.max(1, b.level) } : b,
+          );
+          technologies = prev.technologies.map(t =>
+            t.id === 'basic_mining' ? { ...t, researched: true } : t,
+          );
+        } else if (background === 'diplomat') {
+          // Vael Merchants discovered, +15 reputation across the board.
+          factions = prev.factions.map(f =>
+            f.id === 'vael'
+              ? { ...f, discovered: true, reputation: Math.min(100, f.reputation + 15) }
+              : { ...f, reputation: Math.min(100, f.reputation + 15) },
+          );
+        }
+        return {
+          ...prev,
+          commanderName: commanderName.trim() || 'Commander',
+          planetName: planetName.trim() || 'Kepler-186f',
+          commanderBackground: background,
+          onboarded: true,
+          worldFlags: Array.from(flags),
+          crew,
+          buildings,
+          technologies,
+          factions,
+          units,
+        };
+      });
+    },
+    [],
+  );
+
+  const dismissReturnEvent = useCallback(() => {
+    setState(prev => prev.lastReturnEvent ? { ...prev, lastReturnEvent: null } : prev);
+  }, []);
+
+  const addWorldFlag = useCallback((flag: string) => {
+    setState(prev => prev.worldFlags.includes(flag) ? prev : { ...prev, worldFlags: [...prev.worldFlags, flag] });
+  }, []);
+
+  const getCombatCooldownRemaining = useCallback((factionId: string) => {
+    const cd = state.combatCooldowns[factionId] ?? 0;
+    return Math.max(0, cd - Date.now());
+  }, [state.combatCooldowns]);
+
+  const formatCooldown = useCallback((ms: number) => formatRemaining(ms), []);
 
   return (
     <GameContext.Provider value={{
@@ -1364,6 +1705,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       unassignAutoMiner,
       deployedAutoMiners,
       stabilityTier,
+      completeOnboarding,
+      dismissReturnEvent,
+      addWorldFlag,
+      getCombatCooldownRemaining,
+      formatCooldown,
+      storageFillRatio,
     }}>
       {children}
     </GameContext.Provider>

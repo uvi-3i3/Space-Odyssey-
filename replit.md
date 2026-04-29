@@ -63,6 +63,53 @@ Reusable primitives in `artifacts/space-odyssey/components/`:
 - `CountUpText.tsx` — animated numeric ticker with easing
 - `EventOutcomeModal.tsx` — cinematic event aftermath reveal: type-tinted flash, suspense lock-in, typewriter consequence text, animated resource ledger tickers, optional "CRITICAL" outcome with shimmer + heavy haptic
 
+### Phase 6 Redesign — Identity, Energy, Crew, Return Loop (latest pass)
+
+The "Space Odyssey Redesign" rebuild added the foundational systems below. They are wired through `GameContext` (back-compat for old saves) and surfaced across the HUD, Planet, Command, and Intel screens.
+
+**State foundations (`context/GameContext.tsx`, `constants/gameData.ts`)**
+- New `GameState` fields: `commanderName`, `planetName`, `commanderBackground`, `gameStage` (0..4), `energy`/`maxEnergy`, `worldFlags`, `eventReports`, `factionModifiers`, `lastReturnEvent`, `combatCooldowns`, `crew`, plus `onboarded` flag.
+- `loadGame` defaults every new field for old saves; legacy saves with `totalPlayTime > 60` or any built building auto-mark `onboarded = true` so existing players bypass the new intro.
+
+**Onboarding (`components/OnboardingFlow.tsx`)**
+- Full-screen 5-scene narrative gate (intro → name commander → choose background → name planet → begin) renders before any tab when `state.onboarded === false`.
+- Three commander backgrounds (Soldier / Scientist / Diplomat) grant day-1 bonuses (+2 Scouts and a defense-discount flag, pre-built Lab + basic mining researched, or Vael discovered + +15 reputation everywhere).
+
+**Energy (`components/EnergyBar.tsx`, `ResourceBar.tsx`)**
+- Amber bar in the HUD pulses red when low. Mining costs 5/10/20 energy by type; mining is rejected at 0 energy. Energy regenerates +10/hr in tick + offline catch-up. Each habitat (build or upgrade) raises `maxEnergy` by 20 (base 100).
+
+**In Your Absence (`components/InYourAbsenceModal.tsx`)**
+- On load, if the player was offline > 4h, `loadGame` writes a programmatic narrative to `state.lastReturnEvent` (uses crew names, real numbers, a tone-set opening line). The modal shows it once over the dark blueprint backdrop and `dismissReturnEvent` clears it.
+
+**HUD restructure (`components/ResourceBar.tsx`)**
+- New layout: Era + Planet name + Stability badge on the top row; Credits (K-formatted) | Energy bar | Crew (pop/max) | Storage % on the stats row. Storage % pulses amber at ≥90%, red at 100%.
+
+**Planet screen (`app/(tabs)/index.tsx`)**
+- Storage banners: amber warning at ≥90%, red "STORAGE FULL — MINING HALTED" lockout at 100%.
+- Planet visual stages driven by active building count: 0 = bare planet, 1 = single dome dot (1-2), 2 = three-dot cluster (3-5), 3 = full activity ring (6+).
+- Planet header now shows `state.planetName` instead of static "PLANETARY SURVEY".
+
+**Command screen (`app/(tabs)/command.tsx`)**
+- At max level, the upgrade button is removed entirely and replaced with a celebratory gold "MAXED · LV{n}" banner with a soft glow pulse. No more grey disabled-style fake button.
+
+**Intel screen (`app/(tabs)/intel.tsx`)**
+- Combat: 4-hour per-faction cooldown after any engagement. The ENGAGE FLEET button is replaced inline with "FLEET RECHARGING — Xh Ym" (amber) or "NO MILITARY UNITS" (grey) when blocked. Both states explain *why*.
+- Faction cards: hostile factions get a red glow pulse with a warning icon. The continuous reputation bar is replaced by a 5-pip trust meter (bins map -100..+100 → 0..5 lit pips) and the label reads "TRUST" instead of "ALLIANCE STATUS".
+- New "COMMAND CREW" section above Fleet Management: at minimum the engineer Kael; the second crew slot is determined by background. Each card shows role, backstory, and a one-line ability description.
+
+**Game stage auto-advance (in tick)**
+- Tick advances `gameStage` 0..4 on milestones (first mine, first building, first habitat, first faction discovered, first prestige) and writes a one-time `worldFlag` so each transition fires only once.
+
+**Helpers added to context value**
+- `completeOnboarding({ commanderName, planetName, background })`, `dismissReturnEvent()`, `addWorldFlag(flag)`, `getCombatCooldownRemaining(factionId)`, `formatCooldown(ms)`, `storageFillRatio` (derived).
+
+**Deferred for later (intentionally)**
+- Full 5-role crew recruitment-via-events flow (current pass: data layer + onboarding crew + display only).
+- Phase A/B/C delayed-consequence pipeline (the pre-generated story tree already covers the bulk of the narrative weight).
+- Espionage mechanical consequences with timer-driven faction modifiers (data shape exists in `factionModifiers`; expiration logic is wired in tick but no missions write to it yet).
+- Spec's 3 → 5 tab restructure (current 3-tab Planet/Command/Intel layout reads cleaner; revisit if later content demands it).
+- Phase 8 AI prompt rewrite is moot — the story tree is pre-generated and shipped flat.
+
 ### Event System Drama
 Events now feel like real consequential decisions rather than silent transactions:
 - Choosing an option locks-in (✓ checkmark + glow), siblings dim, and a 750ms suspense overlay ("PROCESSING DECISION · CALCULATING TIMELINE BRANCH...") appears with a spinning ring.

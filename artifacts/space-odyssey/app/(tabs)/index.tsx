@@ -15,7 +15,7 @@ import { FadeSlideIn } from '@/components/FadeSlideIn';
 import { PressableScale } from '@/components/PressableScale';
 import { GlowPulse } from '@/components/GlowPulse';
 import { Shimmer } from '@/components/Shimmer';
-import { PLANET_ZONES, AUTO_MINER_COST } from '@/constants/gameData';
+import { PLANET_ZONES, AUTO_MINER_COST, STORAGE_PULSE_RATIO } from '@/constants/gameData';
 
 const { width } = Dimensions.get('window');
 
@@ -38,8 +38,21 @@ function getRarityColor(rarity: string, colors: any) {
 }
 
 export default function PlanetScreen() {
-  const { state, mineZone, buyAutoMiner, assignAutoMiner, unassignAutoMiner, deployedAutoMiners } = useGame();
+  const { state, mineZone, buyAutoMiner, assignAutoMiner, unassignAutoMiner, deployedAutoMiners, storageFillRatio } = useGame();
   const colors = useColors();
+  // Phase 6 — Storage gate: at 100% all manual mining is rejected by the
+  // game state. We display a banner so the player knows why and where to act.
+  const storageFull = storageFillRatio >= 1;
+  const storageWarn = storageFillRatio >= STORAGE_PULSE_RATIO;
+  // Phase 6 — Planet stage drives the surface visual: more dots/rings as
+  // the colony grows. Derived from active building count, not gameStage,
+  // so it tracks construction progress directly.
+  const activeBuildings = state.buildings.filter(b => b.level > 0).length;
+  const planetStage =
+    activeBuildings === 0 ? 0
+    : activeBuildings <= 2 ? 1
+    : activeBuildings <= 5 ? 2
+    : 3;
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [miningType, setMiningType] = useState<MiningType>('safe');
   const [result, setResult] = useState<{ success: boolean; message: string; rewards?: Record<string, number> } | null>(null);
@@ -110,7 +123,9 @@ export default function PlanetScreen() {
       >
         <View style={styles.pageHeader}>
           <View>
-            <Text style={[styles.pageTitle, { color: colors.foreground }]}>PLANETARY SURVEY</Text>
+            <Text style={[styles.pageTitle, { color: colors.foreground }]}>
+              {state.planetName ? state.planetName.toUpperCase() : 'PLANETARY SURVEY'}
+            </Text>
             <Text style={[styles.pageSubtitle, { color: colors.mutedForeground }]}>
               {unlockedCount}/{state.planetZones.length} ZONES ACCESSIBLE
             </Text>
@@ -120,6 +135,37 @@ export default function PlanetScreen() {
             <Text style={[styles.statusText, { color: colors.secondary }]}>ACTIVE</Text>
           </View>
         </View>
+
+        {/* Phase 6 — Storage banners. Amber warning at 90%+, hard red lock
+            at 100% telling the player exactly where to act (build storage). */}
+        {storageFull && (
+          <GlowPulse color={colors.destructive} duration={1100} min={0.2} max={0.6}>
+            <View style={[styles.storageBanner, { borderColor: colors.destructive, backgroundColor: colors.destructive + '18' }]}>
+              <Feather name="alert-octagon" size={16} color={colors.destructive} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.storageBannerTitle, { color: colors.destructive, fontFamily: 'SpaceMono_700Bold' }]}>
+                  STORAGE FULL — MINING HALTED
+                </Text>
+                <Text style={[styles.storageBannerSub, { color: colors.foreground }]}>
+                  The vault cannot accept new material. Build or upgrade Storage to resume extraction.
+                </Text>
+              </View>
+            </View>
+          </GlowPulse>
+        )}
+        {!storageFull && storageWarn && (
+          <View style={[styles.storageBanner, { borderColor: colors.warning, backgroundColor: colors.warning + '14' }]}>
+            <Feather name="alert-triangle" size={14} color={colors.warning} />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.storageBannerTitle, { color: colors.warning, fontFamily: 'SpaceMono_700Bold' }]}>
+                STORAGE NEAR CAPACITY — {Math.round(storageFillRatio * 100)}%
+              </Text>
+              <Text style={[styles.storageBannerSub, { color: colors.mutedForeground }]}>
+                Mining will stop at 100%. Consider expanding the vault.
+              </Text>
+            </View>
+          </View>
+        )}
 
         <View style={[styles.schematicMap, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.mapHeader}>
@@ -191,6 +237,40 @@ export default function PlanetScreen() {
 
             <View style={styles.planetCore} pointerEvents="none">
               <PlanetIcon type="terran" size={56} glowColor={colors.primary} rotationDuration={56_000} />
+              {/* Phase 6 — colony density overlay. Stage 1: a single dome dot.
+                  Stage 2: three-dot cluster. Stage 3: a full activity ring of
+                  dots so the world reads as truly settled. */}
+              {planetStage >= 1 && (
+                <View style={styles.colonyDome} pointerEvents="none">
+                  <View style={[styles.colonyDot, { backgroundColor: colors.secondary, shadowColor: colors.secondary, shadowOpacity: 0.9, shadowRadius: 4 }]} />
+                </View>
+              )}
+              {planetStage >= 2 && (
+                <>
+                  <View style={[styles.colonyDome, { top: -2, left: 22 }]} pointerEvents="none">
+                    <View style={[styles.colonyDot, { backgroundColor: colors.primary }]} />
+                  </View>
+                  <View style={[styles.colonyDome, { top: 30, left: -2 }]} pointerEvents="none">
+                    <View style={[styles.colonyDot, { backgroundColor: colors.secondary }]} />
+                  </View>
+                </>
+              )}
+              {planetStage >= 3 && (
+                <View style={styles.activityRing} pointerEvents="none">
+                  {[0, 60, 120, 180, 240, 300].map(deg => (
+                    <View
+                      key={deg}
+                      style={[
+                        styles.ringDot,
+                        {
+                          backgroundColor: colors.primary,
+                          transform: [{ rotate: `${deg}deg` }, { translateY: -34 }],
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
             </View>
           </View>
 
@@ -537,6 +617,45 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  storageBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderWidth: 1.5,
+    borderRadius: 6,
+  },
+  storageBannerTitle: { fontSize: 11, letterSpacing: 1 },
+  storageBannerSub: { fontSize: 10, fontFamily: 'Inter_400Regular', lineHeight: 14, marginTop: 2 },
+  colonyDome: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    width: 8,
+    height: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colonyDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+  },
+  activityRing: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ringDot: {
+    position: 'absolute',
+    width: 3,
+    height: 3,
+    borderRadius: 2,
+  },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot: { width: 10, height: 10, borderRadius: 5, borderWidth: 1.5 },
 

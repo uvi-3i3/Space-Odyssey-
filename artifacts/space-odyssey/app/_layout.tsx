@@ -22,6 +22,8 @@ import { Pressable, Text, View } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { GameProvider, useGame } from "@/context/GameContext";
 import { ResourceBar } from "@/components/ResourceBar";
+import { OnboardingFlow } from "@/components/OnboardingFlow";
+import { InYourAbsenceModal } from "@/components/InYourAbsenceModal";
 
 // Phase 3 — small toast that surfaces save/load failures from GameContext.
 // Lives inside GameProvider so it can subscribe to `lastError`. Sits above
@@ -65,16 +67,26 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
+  // Phase 6 — Onboarding gate. Until the player completes the intro, we
+  // render the full-screen narrative flow; tabs + HUD are entirely hidden.
+  const { state } = useGame();
+  if (!state.onboarded) {
+    return <OnboardingFlow />;
+  }
   return (
-    <Stack screenOptions={{ headerBackTitle: "Back" }}>
-      <Stack.Screen
-        name="(tabs)"
-        options={{
-          headerShown: true,
-          header: () => <ResourceBar />,
-        }}
-      />
-    </Stack>
+    <>
+      <Stack screenOptions={{ headerBackTitle: "Back" }}>
+        <Stack.Screen
+          name="(tabs)"
+          options={{
+            headerShown: true,
+            header: () => <ResourceBar />,
+          }}
+        />
+      </Stack>
+      {/* Phase 6 — surface the In-Your-Absence narrative once per session. */}
+      <InYourAbsenceModal />
+    </>
   );
 }
 

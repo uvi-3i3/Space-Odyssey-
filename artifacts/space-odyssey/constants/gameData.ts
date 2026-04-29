@@ -164,6 +164,156 @@ export const INITIAL_ACHIEVEMENTS: Achievement[] = [
   { id: 'elements_50', name: 'Grand Codex', description: 'Discover all elements.', rarity: 'legendary', unlocked: false, progress: 0, target: 16, reward: 1000 },
 ];
 
+// ---------------------------------------------------------------------------
+// Phase 6 — Commander, Crew, Energy, Stages.
+// Type definitions + constants shared across the GameContext and the UI layer.
+// ---------------------------------------------------------------------------
+
+export type CommanderBackground = 'soldier' | 'scientist' | 'diplomat';
+
+export interface CrewMember {
+  id: string;
+  name: string;
+  role: 'engineer' | 'scientist' | 'soldier' | 'diplomat' | 'explorer';
+  /** 2-sentence backstory, written like a profile card. */
+  backstory: string;
+  /** Plain-English description of the passive effect. */
+  ability: string;
+  /** What the bonus actually does mechanically. */
+  abilityEffect: {
+    type: 'mining_bonus' | 'research_speed' | 'combat_power' | 'energy_regen' | 'event_option';
+    value: number;
+    unlocksEventOption?: string;
+  };
+  status: 'active' | 'on_mission' | 'injured' | 'lost';
+  /** 0..5 — grows through relevant activity (future). */
+  experienceLevel: number;
+  eventHistory: string[];
+}
+
+export interface FactionModifier {
+  id: string;
+  factionId: string;
+  type: 'enemy_power_down' | 'enemy_power_up' | 'win_chance_up' | 'reveal_power' | 'block_threat' | 'block_espionage';
+  value: number;
+  /** Unix ms — modifier expires after this time. */
+  expiresAt: number;
+}
+
+/** Each Commander background grants a starter set + small bonus. */
+export const BACKGROUND_DETAILS: Record<CommanderBackground, {
+  label: string;
+  tagline: string;
+  bonus: string;
+}> = {
+  soldier: {
+    label: 'THE SOLDIER',
+    tagline: 'You led the military evacuation. You are trusted. You are feared.',
+    bonus: '+2 Scout units, Defense Tower costs 30% less.',
+  },
+  scientist: {
+    label: 'THE SCIENTIST',
+    tagline: 'You designed the Helios drive. Your mind sees patterns others miss.',
+    bonus: 'Research Lab pre-built, Basic Mining pre-researched.',
+  },
+  diplomat: {
+    label: 'THE DIPLOMAT',
+    tagline: 'You brokered the last peace accord before the fall. Words are your weapons.',
+    bonus: 'Vael Merchants discovered, +15 reputation with all factions.',
+  },
+};
+
+/** Build the starting crew based on the chosen background. Kael is always present. */
+export function getStartingCrew(bg: CommanderBackground): CrewMember[] {
+  const kael: CrewMember = {
+    id: 'kael',
+    name: 'Kael',
+    role: 'engineer',
+    backstory:
+      'A young engineer who survived the evacuation by hiding in a cargo module. Steady hands, sharper instincts than his rank suggests.',
+    ability: 'Keeps the Basic Mine running 5% better than spec.',
+    abilityEffect: { type: 'mining_bonus', value: 0.05 },
+    status: 'active',
+    experienceLevel: 1,
+    eventHistory: [],
+  };
+  if (bg === 'soldier') {
+    return [
+      kael,
+      {
+        id: 'rynn',
+        name: 'Rynn',
+        role: 'soldier',
+        backstory:
+          'A career marine who refuses to talk about Earth. Carries her old unit\'s patch in a sealed pouch.',
+        ability: 'Drills the militia daily — adds +10 to the colony\'s defense.',
+        abilityEffect: { type: 'combat_power', value: 10 },
+        status: 'active',
+        experienceLevel: 2,
+        eventHistory: [],
+      },
+    ];
+  }
+  if (bg === 'scientist') {
+    return [
+      kael,
+      {
+        id: 'mira',
+        name: 'Mira',
+        role: 'scientist',
+        backstory:
+          'Your lead xenobiologist. She keeps a notebook of every unfamiliar microbe she has ever logged.',
+        ability: 'Cuts research time by 10% on every project.',
+        abilityEffect: { type: 'research_speed', value: 0.1 },
+        status: 'active',
+        experienceLevel: 2,
+        eventHistory: [],
+      },
+    ];
+  }
+  return [
+    kael,
+    {
+      id: 'sorin',
+      name: 'Sorin',
+      role: 'diplomat',
+      backstory:
+        'A career envoy with a steady voice and a longer memory than most kings. He owes you, and he doesn\'t forget.',
+      ability: 'Unlocks an extra option in some faction events.',
+      abilityEffect: { type: 'event_option', value: 1, unlocksEventOption: 'diplomat_choice' },
+      status: 'active',
+      experienceLevel: 2,
+      eventHistory: [],
+    },
+  ];
+}
+
+// Phase 6 — Energy.
+/** Default Commander energy pool. */
+export const ENERGY_BASE_MAX = 100;
+/** Per-Habitat-Dome bonus to the energy cap. */
+export const ENERGY_PER_HABITAT_LEVEL = 20;
+/** Energy regen per real second. 10/hour = 0.00278/sec. */
+export const ENERGY_REGEN_PER_SEC = 10 / 3600;
+/** Energy cost per manual mining action. */
+export const ENERGY_COST_BY_MINING: Record<'safe' | 'aggressive' | 'deep', number> = {
+  safe: 5,
+  aggressive: 10,
+  deep: 20,
+};
+/** Auto-Miner energy cost per yield tick (consumed when a yield actually fires). */
+export const ENERGY_COST_PER_AUTOMINER_YIELD = 1;
+
+// Phase 6 — Combat cooldown (real ms) between attacks on the same faction.
+export const COMBAT_COOLDOWN_MS = 4 * 60 * 60 * 1000;
+
+// Phase 6 — Storage thresholds for HUD pulse + mining lockout.
+export const STORAGE_PULSE_RATIO = 0.9;
+export const STORAGE_FULL_RATIO = 1.0;
+
+// Phase 6 — Game progression stages. Drive what UI is visible.
+export type GameStage = 0 | 1 | 2 | 3 | 4;
+
 export interface PlanetZone {
   id: string;
   name: string;

@@ -56,6 +56,7 @@ export default function IntelScreen() {
     state, resolveEvent, generateEvent, generatingEvent,
     engageCombat, runEspionage, recruitUnits, getElementQuantity,
     claimDailyReward, performPrestige, getFactionRelationship,
+    getCombatCooldownRemaining, formatCooldown,
   } = useGame();
   const colors = useColors();
   const [section, setSection] = useState<IntelSection>('events');
@@ -114,9 +115,46 @@ export default function IntelScreen() {
 
   const handleCombat = () => {
     if (!selectedFaction) return;
+    // Phase 6 — cooldown + military gating happens inside engageCombat;
+    // it returns a 'cooldown' or 'no-units' outcome we surface to the player.
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
     const result = engageCombat(selectedFaction, strategy);
     setLastCombat(result);
+  };
+
+  // Phase 6 — total military strength across all unit rows. Used to gate
+  // the "ENGAGE FLEET" button: you can't attack with zero units.
+  const totalUnits = state.units.reduce((s, u) => s + u.count, 0);
+
+  // Phase 6 — 5-pip trust meter mapped from -100..+100 reputation.
+  // Bins: -100..-61 (0 lit), -60..-21 (1), -20..+20 (2), +21..+60 (3), +61..+100 (4),
+  // capped to 5 only at 100.
+  const trustPipsLit = (rep: number): number => {
+    if (rep >= 100) return 5;
+    if (rep >= 61) return 4;
+    if (rep >= 21) return 3;
+    if (rep >= -20) return 2;
+    if (rep >= -60) return 1;
+    return 0;
+  };
+
+  const TrustPips = ({ rep, color }: { rep: number; color: string }) => {
+    const lit = trustPipsLit(rep);
+    return (
+      <View style={{ flexDirection: 'row', gap: 3 }}>
+        {[0, 1, 2, 3, 4].map(i => (
+          <View
+            key={i}
+            style={{
+              width: 8, height: 8, borderRadius: 2,
+              borderWidth: 1,
+              borderColor: i < lit ? color : colors.border,
+              backgroundColor: i < lit ? color : 'transparent',
+            }}
+          />
+        ))}
+      </View>
+    );
   };
 
   const handleEspionage = (mission: EspionageMission) => {
@@ -500,9 +538,19 @@ export default function IntelScreen() {
                         scaleTo={0.98}
                       >
                         <View style={styles.factionTop}>
-                          <View style={[styles.factionIcon, { borderColor: relColor + '55', backgroundColor: relColor + '14' }]}>
-                            <Feather name="users" size={16} color={relColor} />
-                          </View>
+                          {/* Phase 6 — hostile factions get a faint red pulse so
+                              the threat is visible at a glance from the list. */}
+                          {relationship === 'hostile' ? (
+                            <GlowPulse color={relColor} duration={1400} min={0.15} max={0.55}>
+                              <View style={[styles.factionIcon, { borderColor: relColor, backgroundColor: relColor + '20' }]}>
+                                <Feather name="alert-triangle" size={16} color={relColor} />
+                              </View>
+                            </GlowPulse>
+                          ) : (
+                            <View style={[styles.factionIcon, { borderColor: relColor + '55', backgroundColor: relColor + '14' }]}>
+                              <Feather name="users" size={16} color={relColor} />
+                            </View>
+                          )}
                           <View style={{ flex: 1 }}>
                             <Text style={[styles.factionName, { color: colors.foreground }]}>{faction.name}</Text>
                             <Text style={[styles.factionDesc, { color: colors.mutedForeground }]}>{faction.description}</Text>
@@ -513,11 +561,9 @@ export default function IntelScreen() {
                         </View>
                         <View style={styles.repRow}>
                           <Text style={[styles.repLabel, { color: colors.mutedForeground, fontFamily: 'SpaceMono_400Regular' }]}>
-                            ALLIANCE STATUS  {faction.reputation > 0 ? '+' : ''}{faction.reputation}
+                            TRUST  {faction.reputation > 0 ? '+' : ''}{faction.reputation}
                           </Text>
-                          <View style={styles.repBar}>
-                            <ProgressBar progress={repProgress} color={relColor} height={3} />
-                          </View>
+                          <TrustPips rep={faction.reputation} color={relColor} />
                         </View>
                       </PressableScale>
                       </FadeSlideIn>
@@ -555,20 +601,52 @@ export default function IntelScreen() {
                   </FadeSlideIn>
                 ))}
 
-                <GlowPulse color={colors.destructive} intensity={0.5} duration={1800}>
-                <PressableScale
-                  style={[styles.engageBtn, { backgroundColor: colors.destructive }]}
-                  onPress={handleCombat}
-                  glow
-                  glowColor={colors.destructive}
-                  scaleTo={0.95}
-                >
-                  <Feather name="crosshair" size={16} color="#FFFFFF" />
-                  <Text style={[styles.engageBtnText, { color: '#FFFFFF', fontFamily: 'SpaceMono_700Bold' }]}>
-                    ENGAGE FLEET
-                  </Text>
-                </PressableScale>
-                </GlowPulse>
+                {/* Phase 6 — gate the attack button on cooldown + having any
+                    military units. We surface both states inline so the player
+                    knows WHY they can't attack rather than getting a silent fail. */}
+                {(() => {
+                  const cdRemaining = selectedFaction ? getCombatCooldownRemaining(selectedFaction) : 0;
+                  const onCooldown = cdRemaining > 0;
+                  const noMilitary = totalUnits === 0;
+                  const blocked = onCooldown || noMilitary;
+                  if (blocked) {
+                    const blockColor = onCooldown ? colors.warning : colors.mutedForeground;
+                    const icon = onCooldown ? 'clock' : 'shield-off';
+                    const title = onCooldown
+                      ? `FLEET RECHARGING — ${formatCooldown(cdRemaining)}`
+                      : 'NO MILITARY UNITS';
+                    const sub = onCooldown
+                      ? 'Combat exhausts the fleet. They need time to rearm.'
+                      : 'Build at least one unit in FLEET before engaging.';
+                    return (
+                      <View style={[styles.engageBlockedBanner, { borderColor: blockColor, backgroundColor: blockColor + '14' }]}>
+                        <Feather name={icon as any} size={16} color={blockColor} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.engageBlockedTitle, { color: blockColor, fontFamily: 'SpaceMono_700Bold' }]}>
+                            {title}
+                          </Text>
+                          <Text style={[styles.engageBlockedSub, { color: colors.mutedForeground }]}>{sub}</Text>
+                        </View>
+                      </View>
+                    );
+                  }
+                  return (
+                    <GlowPulse color={colors.destructive} duration={1800}>
+                      <PressableScale
+                        style={[styles.engageBtn, { backgroundColor: colors.destructive }]}
+                        onPress={handleCombat}
+                        glow
+                        glowColor={colors.destructive}
+                        scaleTo={0.95}
+                      >
+                        <Feather name="crosshair" size={16} color="#FFFFFF" />
+                        <Text style={[styles.engageBtnText, { color: '#FFFFFF', fontFamily: 'SpaceMono_700Bold' }]}>
+                          ENGAGE FLEET
+                        </Text>
+                      </PressableScale>
+                    </GlowPulse>
+                  );
+                })()}
 
                 {lastCombat && (
                   <FadeSlideIn key={`combat-${lastCombat.timestamp}`} duration={420} offset={10}>
@@ -640,7 +718,53 @@ export default function IntelScreen() {
 
             {combatMode === 'fleet' && (
               <FadeSlideIn key="fleet" duration={360} offset={12}>
-                <Text style={[styles.sectionTitle, { color: colors.foreground }]}>FLEET MANAGEMENT</Text>
+                {/* Phase 6 — Crew roster. These are story characters, not
+                    combat units; they show up by name in In-Your-Absence
+                    reports and onboarding. Always at least one (Kael). */}
+                {state.crew.length > 0 && (
+                  <>
+                    <Text style={[styles.sectionTitle, { color: colors.foreground }]}>COMMAND CREW</Text>
+                    {state.crew.map((member, idx) => {
+                      const roleColor =
+                        member.role === 'engineer' ? colors.primary
+                        : member.role === 'soldier' ? colors.destructive
+                        : member.role === 'scientist' ? colors.secondary
+                        : member.role === 'diplomat' ? colors.legendary
+                        : colors.warning;
+                      const icon =
+                        member.role === 'engineer' ? 'tool'
+                        : member.role === 'soldier' ? 'shield'
+                        : member.role === 'scientist' ? 'cpu'
+                        : member.role === 'diplomat' ? 'message-circle'
+                        : 'eye';
+                      return (
+                        <FadeSlideIn key={member.id} delay={idx * 40} duration={300} offset={6}>
+                          <View style={[styles.crewCard, { borderColor: roleColor + '55', backgroundColor: colors.card }]}>
+                            <View style={[styles.crewIcon, { borderColor: roleColor, backgroundColor: roleColor + '14' }]}>
+                              <Feather name={icon as any} size={14} color={roleColor} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={[styles.crewName, { color: colors.foreground }]}>
+                                {member.name.toUpperCase()}
+                              </Text>
+                              <Text style={[styles.crewRole, { color: roleColor }]}>
+                                {member.role.toUpperCase()}
+                              </Text>
+                              <Text style={[styles.crewBio, { color: colors.mutedForeground }]}>
+                                {member.backstory}
+                              </Text>
+                              <Text style={[styles.crewBio, { color: colors.secondary, marginTop: 2 }]}>
+                                ✦ {member.ability}
+                              </Text>
+                            </View>
+                          </View>
+                        </FadeSlideIn>
+                      );
+                    })}
+                  </>
+                )}
+
+                <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: 8 }]}>FLEET MANAGEMENT</Text>
                 {state.units.map((unit, idx) => {
                   const canAffordUnit = Object.entries(unit.cost).every(([id, amt]) => getElementQuantity(id) >= amt * 5);
                   return (
@@ -721,12 +845,16 @@ export default function IntelScreen() {
                   {faction.discovered && (
                     <View style={styles.repBlock}>
                       <View style={styles.repBlockHeader}>
-                        <Text style={[styles.repBlockLabel, { color: colors.mutedForeground }]}>ALLIANCE RATING</Text>
+                        <Text style={[styles.repBlockLabel, { color: colors.mutedForeground }]}>TRUST</Text>
                         <Text style={[styles.repBlockValue, { color: relColor, fontFamily: 'SpaceMono_700Bold' }]}>
                           {faction.reputation > 0 ? '+' : ''}{faction.reputation}
                         </Text>
                       </View>
-                      <ProgressBar progress={repProgress} color={relColor} height={4} />
+                      {/* Phase 6 — 5-pip trust meter is faster to read than a
+                          continuous bar; tier change is the meaningful event. */}
+                      <View style={{ marginVertical: 6 }}>
+                        <TrustPips rep={faction.reputation} color={relColor} />
+                      </View>
                       <View style={styles.repScale}>
                         <Text style={[styles.repScaleLabel, { color: colors.destructive }]}>HOSTILE</Text>
                         <Text style={[styles.repScaleLabel, { color: colors.mutedForeground }]}>NEUTRAL</Text>
@@ -1079,6 +1207,32 @@ const styles = StyleSheet.create({
   stratDesc: { fontSize: 10, fontFamily: 'Inter_400Regular' },
   engageBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 13, borderRadius: 6 },
   engageBtnText: { fontSize: 13, letterSpacing: 1.5 },
+  engageBlockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderWidth: 1.5,
+    borderRadius: 6,
+  },
+  engageBlockedTitle: { fontSize: 11, letterSpacing: 1.5 },
+  engageBlockedSub: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  crewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 11,
+    borderWidth: 1,
+    borderRadius: 6,
+    marginBottom: 6,
+  },
+  crewIcon: {
+    width: 32, height: 32, borderRadius: 16,
+    borderWidth: 1.5, alignItems: 'center', justifyContent: 'center',
+  },
+  crewName: { fontSize: 12, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
+  crewRole: { fontSize: 9, fontFamily: 'Inter_400Regular', letterSpacing: 1, marginTop: 1 },
+  crewBio: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 4, lineHeight: 14 },
   combatResult: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 8, padding: 12 },
   combatResultTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   combatResultDesc: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 },
