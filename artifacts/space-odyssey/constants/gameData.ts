@@ -71,6 +71,60 @@ export interface EventChoice {
   nextNodeId?: string;
 }
 
+/**
+ * Phase 3 — Delayed Consequence Pipeline (Phase A→B→C).
+ *
+ * When the player picks a choice, the choice is locked in and the story
+ * advances IMMEDIATELY (Phase B), but the actual resource / reputation /
+ * stability / population / defense / building changes are scheduled for a
+ * later wallclock time (Phase C). This makes events feel like real decisions
+ * rather than instant transactions, and gives the player a reason to come
+ * back to the colony after a break.
+ *
+ * The full computed bundle (including critical roll, merged effects, and the
+ * accent text) is snapshotted at choice time so the report is deterministic
+ * regardless of what changes between choice and resolution. The server-side
+ * resolution is purely time-based.
+ */
+export interface PendingReport {
+  /** Unique id, also used as the EventResolution id when finalized. */
+  id: string;
+  /** The originating event's id (snapshot — event itself is gone from activeEvents). */
+  eventId: string;
+  eventTitle: string;
+  eventType: 'random' | 'story' | 'discovery' | 'threat';
+  /** The full event description preserved so the consequence reads in context. */
+  eventDescription: string;
+  choiceId: string;
+  choiceText: string;
+  consequence: string;
+  /** Final resource deltas after critical scaling — applied verbatim at resolveAt. */
+  resourceChanges: Record<string, number>;
+  /** Per-faction reputation deltas (story-tree shape). */
+  factionReputationChanges: Record<string, number>;
+  /** Legacy single-number rep change (applied across every faction). */
+  legacyReputationChange: number;
+  stabilityChange: number;
+  populationChange: number;
+  defensePowerChange: number;
+  buildingLevelChanges: Record<string, number>;
+  critical: boolean;
+  /** Sum used for headline tone in the outcome modal. */
+  netScore: number;
+  /** Wallclock ms when the choice was locked in. */
+  decidedAt: number;
+  /** Wallclock ms when the consequence resolves and effects apply. */
+  resolveAt: number;
+}
+
+/** Phase 3 — how long until each event type's consequence lands. Spec: 1, 2, 4, 8, or 12 hours. */
+export const RESOLVE_DELAY_HOURS_BY_TYPE: Record<'random' | 'story' | 'discovery' | 'threat', number> = {
+  threat: 1,
+  discovery: 2,
+  random: 2,
+  story: 4,
+};
+
 export type RelationshipTier = 'hostile' | 'neutral' | 'friendly' | 'allied';
 
 export interface Faction {

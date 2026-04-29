@@ -117,6 +117,15 @@ Events now feel like real consequential decisions rather than silent transaction
 - 16-24% chance per event of a CRITICAL outcome (varies by event type: discovery 24%, random 20%, story 18%, threat 16%) — multiplies positive resource gains by 1.6×, halves losses (except threats), and on discovery/story criticals adds a bonus rare/epic element. Critical outcomes are gold-accented with a shimmer badge and heavy haptic.
 - Resolved events are stored in `state.eventLog` (last 25, persisted) and shown in an "AFTERMATH LOG" section as tappable rows that re-open the outcome modal in read-only mode.
 
+### Phase 3 — Delayed Event Consequences (A/B/C Pipeline)
+Choices commit immediately but resource/reputation/stability consequences land hours later as Reports, mirroring real galactic command lag:
+- **Phase A (immediate, in `resolveEvent`)**: roll critical chance, compute the would-be effects (resources, reputation, stability, population, defense, building unlocks), and choose flavor copy.
+- **Phase B (immediate)**: advance the story tree, reveal newly unlocked factions (Krenn / Vael) so the world responds to the choice in real-time, and queue a `PendingReport` carrying every Phase-C delta plus the original event title and choice text. The choice modal opens in "TRANSMISSION QUEUED" mode — countdown ring, progress bar, soft `selectionAsync` haptic, no ledger reveal.
+- **Phase C (deferred)**: the game tick + offline catch-up call `drainResolvedReports(state, Date.now())`, which iterates pending reports whose `resolveAt` has passed, applies all stored deltas via `applyResolvedReport`, removes them from the queue, and sets `lastResolvedReport` so the Intel screen auto-pops the full outcome modal with the count-up ledger and heavy-impact haptic.
+- **Delays by event type** (`RESOLVE_DELAY_HOURS_BY_TYPE`): threat 1h (urgent), discovery 2h, random 2h, story 4h (cross-faction diplomacy takes time).
+- **Pending Reports queue** (Intel → Events tab, above Aftermath Log): each pending report shows a colored type badge, the original event title, the locked-in choice prefixed with `>`, a live countdown ("3h 12m") that re-renders every 30s, an elapsed-progress bar, and a "Resolves at HH:MM" footer. Non-interactive on purpose — the player committed; only time can deliver the outcome.
+- Pending reports persist via `state.pendingReports` and are processed both during foreground ticks and on app re-open via `applyOfflineProgress`, so closing the app doesn't pause the consequence clock.
+
 Integration coverage:
 - Planet (`app/(tabs)/index.tsx`) — starfield, rotating planet, scan pulse, zone node press, mining buttons, panel/banner fade-in, codex shimmer
 - Command (`app/(tabs)/command.tsx`) — section pills, era chips, building cards, expand details, construct/upgrade/research buttons, active research glow pulse

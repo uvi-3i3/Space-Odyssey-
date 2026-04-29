@@ -57,6 +57,7 @@ export default function IntelScreen() {
     engageCombat, runEspionage, recruitUnits, getElementQuantity,
     claimDailyReward, performPrestige, getFactionRelationship,
     getCombatCooldownRemaining, formatCooldown,
+    dismissResolvedReport, getPendingReportRemaining,
   } = useGame();
   const colors = useColors();
   const [section, setSection] = useState<IntelSection>('events');
@@ -98,6 +99,41 @@ export default function IntelScreen() {
       suspenseAnim.setValue(0);
     }
   }, [resolving]);
+
+  // Phase 3 — auto-popup the most-recently-resolved report. The tick / offline
+  // catch-up sets `lastResolvedReport` whenever a queued consequence lands;
+  // we surface it once with a heavy haptic, then clear it so it doesn't
+  // re-fire on every render. The full ledger view runs (readOnly: false) so
+  // the player gets the full count-up animation reveal.
+  useEffect(() => {
+    if (state.lastResolvedReport && !outcome) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+      setOutcomeReadOnly(false);
+      setOutcome(state.lastResolvedReport);
+      dismissResolvedReport();
+    }
+  }, [state.lastResolvedReport, outcome, dismissResolvedReport]);
+
+  // Phase 3 — drive the Pending Reports countdown badges. Cheap re-render
+  // every 30s; the displayed strings are formatted in the render body.
+  const [, forcePendingTick] = useState(0);
+  useEffect(() => {
+    if (state.pendingReports.length === 0) return;
+    const id = setInterval(() => forcePendingTick(n => n + 1), 30000);
+    return () => clearInterval(id);
+  }, [state.pendingReports.length]);
+
+  // Phase 3 — short formatter for the inline badges ("3h 12m", "47s").
+  const formatPendingShort = (ms: number): string => {
+    if (ms <= 0) return 'imminent';
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${s}s`;
+  };
 
   const handleChoosePath = (eventId: string, choiceId: string, color: string) => {
     if (resolving) return;
@@ -401,6 +437,77 @@ export default function IntelScreen() {
                 </FadeSlideIn>
               );
             })}
+
+            {state.pendingReports.length > 0 && (
+              <View style={styles.completedSection}>
+                {/* Phase 3 — Pending Reports queue. Each row shows the type
+                   badge, original event title, the locked-in choice, and a
+                   live countdown to when consequences land. Non-interactive
+                   on purpose — the player committed; all that's left is to
+                   wait for the report to arrive. */}
+                <Text style={[styles.completedLabel, { color: colors.mutedForeground }]}>
+                  PENDING REPORTS ({state.pendingReports.length})
+                </Text>
+                {state.pendingReports
+                  .slice()
+                  .sort((a, b) => a.resolveAt - b.resolveAt)
+                  .map((report, i) => {
+                    const c = EVENT_TYPE_COLORS[report.eventType] ?? colors.primary;
+                    const ic = EVENT_TYPE_ICONS[report.eventType] ?? 'radio';
+                    const remaining = getPendingReportRemaining(report.id);
+                    const totalDelay = Math.max(1, report.resolveAt - report.decidedAt);
+                    const elapsedRatio = Math.min(1, 1 - remaining / totalDelay);
+                    const resolveLabel = new Date(report.resolveAt).toLocaleTimeString([], {
+                      hour: '2-digit', minute: '2-digit',
+                    });
+                    return (
+                      <FadeSlideIn key={report.id} delay={i * 40} duration={280} offset={6}>
+                        <View
+                          style={[
+                            styles.pendingCard,
+                            { borderColor: c + '66', backgroundColor: colors.card },
+                          ]}
+                        >
+                          <View style={[styles.pendingStripe, { backgroundColor: c }]} />
+                          <View style={{ flex: 1, gap: 5 }}>
+                            <View style={styles.pendingHeaderRow}>
+                              <View style={[styles.pendingTypeTag, { borderColor: c, backgroundColor: c + '18' }]}>
+                                <Feather name={ic as any} size={9} color={c} />
+                                <Text style={[styles.pendingTypeText, { color: c }]}>
+                                  {report.eventType.toUpperCase()}
+                                </Text>
+                              </View>
+                              <View style={[styles.pendingClockTag, { borderColor: c + '55', backgroundColor: c + '12' }]}>
+                                <Feather name="clock" size={9} color={c} />
+                                <Text style={[styles.pendingCountdownText, { color: c }]}>
+                                  {formatPendingShort(remaining)}
+                                </Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.pendingTitle, { color: colors.foreground }]} numberOfLines={1}>
+                              {report.eventTitle}
+                            </Text>
+                            <Text style={[styles.pendingChoice, { color: colors.mutedForeground }]} numberOfLines={1}>
+                              &gt; {report.choiceText}
+                            </Text>
+                            <View style={[styles.pendingTrack, { backgroundColor: colors.border }]}>
+                              <View
+                                style={[
+                                  styles.pendingFill,
+                                  { backgroundColor: c, width: `${Math.round(elapsedRatio * 100)}%` },
+                                ]}
+                              />
+                            </View>
+                            <Text style={[styles.pendingFooter, { color: colors.mutedForeground }]}>
+                              Resolves at {resolveLabel}
+                            </Text>
+                          </View>
+                        </View>
+                      </FadeSlideIn>
+                    );
+                  })}
+              </View>
+            )}
 
             {state.eventLog.length > 0 && (
               <View style={styles.completedSection}>
@@ -1160,6 +1267,30 @@ const styles = StyleSheet.create({
   logChoice: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
   logDeltas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
   logDelta: { fontSize: 10 },
+  // Phase 3 — Pending Reports queue styles.
+  pendingCard: {
+    flexDirection: 'row', alignItems: 'stretch', gap: 10,
+    padding: 10, paddingLeft: 0, borderWidth: 1, borderRadius: 6, overflow: 'hidden',
+    marginBottom: 6,
+  },
+  pendingStripe: { width: 3, alignSelf: 'stretch', marginRight: 8 },
+  pendingHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pendingTypeTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1,
+  },
+  pendingTypeText: { fontSize: 9, fontFamily: 'SpaceMono_700Bold', letterSpacing: 1 },
+  pendingClockTag: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1,
+    marginLeft: 'auto',
+  },
+  pendingCountdownText: { fontSize: 10, fontFamily: 'SpaceMono_700Bold', letterSpacing: 1 },
+  pendingTitle: { fontSize: 12, fontFamily: 'Inter_700Bold' },
+  pendingChoice: { fontSize: 11, fontFamily: 'Inter_400Regular', fontStyle: 'italic' },
+  pendingTrack: { height: 3, borderRadius: 2, overflow: 'hidden', marginTop: 2 },
+  pendingFill: { height: '100%', borderRadius: 2 },
+  pendingFooter: { fontSize: 9, fontFamily: 'SpaceMono_400Regular', letterSpacing: 0.5, marginTop: 1 },
   suspenseOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center', justifyContent: 'center', zIndex: 99,

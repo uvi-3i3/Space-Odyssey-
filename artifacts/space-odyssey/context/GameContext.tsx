@@ -11,6 +11,7 @@ import {
   CommanderBackground, CrewMember, FactionModifier, GameStage, getStartingCrew,
   ENERGY_BASE_MAX, ENERGY_PER_HABITAT_LEVEL, ENERGY_REGEN_PER_SEC,
   ENERGY_COST_BY_MINING, ENERGY_COST_PER_AUTOMINER_YIELD, COMBAT_COOLDOWN_MS,
+  PendingReport, RESOLVE_DELAY_HOURS_BY_TYPE,
 } from '@/constants/gameData';
 import { STORY_TREE, StoryNode } from '@/constants/storyData';
 
@@ -96,6 +97,21 @@ export interface GameState {
   lastReturnEvent: string | null;
   /** factionId -> unix ms when the next combat is allowed. */
   combatCooldowns: Record<string, number>;
+  // -------------------------------------------------------------------------
+  // Phase 3 — Delayed consequence pipeline.
+  // Choices lock in immediately (and advance the story tree), but the
+  // resource / rep / stability / pop / defense / building deltas they imply
+  // land at `report.resolveAt` — minutes-to-hours later. The player must
+  // come back and read the report. See `PendingReport` in gameData.ts.
+  // -------------------------------------------------------------------------
+  /** Choices awaiting their wallclock-time resolution. */
+  pendingReports: PendingReport[];
+  /**
+   * Most-recently-resolved report (auto-applied by the tick or by offline
+   * catch-up). UI surfaces it as a "NEW REPORT" auto-popup once, then clears
+   * it via `dismissResolvedReport()`.
+   */
+  lastResolvedReport: EventResolution | null;
 }
 
 export interface CombatEntry {
@@ -120,6 +136,14 @@ export interface EventResolution {
   critical: boolean;
   netScore: number;
   timestamp: number;
+  /**
+   * Phase 3 — when true, the choice has been locked in but its consequences
+   * have not yet been applied. The outcome modal renders a "TRANSMISSION
+   * QUEUED" view counting down to `resolveAt` instead of the ledger.
+   */
+  pending?: boolean;
+  /** Phase 3 — wallclock ms when the consequences land (only set when pending). */
+  resolveAt?: number;
 }
 
 export interface EspionageEntry {
@@ -210,6 +234,9 @@ const initialState: GameState = {
   factionModifiers: [],
   lastReturnEvent: null,
   combatCooldowns: {},
+  // Phase 3 — start with no pending consequences and no fresh report.
+  pendingReports: [],
+  lastResolvedReport: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -477,6 +504,120 @@ function advanceGameStage(s: GameState): GameState {
 }
 
 /**
+ * Phase 3 — Apply a single PendingReport to game state. Pure helper.
+ *
+ * This is the "Phase C" half of the delayed-consequence pipeline. The report
+ * is a snapshot taken at choice time, so we never recompute deltas — we
+ * simply pour them into resources, credits, factions, stability, population,
+ * defense, and building levels (clamped). The function returns:
+ *   - the updated state (with the report removed from `pendingReports` and
+ *     prepended to `eventLog` as a finalized EventResolution), and
+ *   - the EventResolution itself, so the caller can flag it as the
+ *     `lastResolvedReport` for an auto-popup.
+ *
+ * Idempotency: callers must remove the report from `pendingReports` before
+ * (or as part of) updating state. Tick + offline catch-up do this in bulk.
+ */
+function applyResolvedReport(s: GameState, report: PendingReport): { state: GameState; resolution: EventResolution } {
+  let elements = [...s.elements];
+  let credits = s.credits;
+  Object.keys(report.resourceChanges).forEach(k => {
+    const change = report.resourceChanges[k];
+    if (k === 'credits') { credits = Math.max(0, Math.min(999999, credits + change)); return; }
+    elements = elements.map(e =>
+      e.id === k
+        ? { ...e, quantity: Math.max(0, Math.min(s.storageCapacity, e.quantity + change)) }
+        : e,
+    );
+  });
+
+  // Faction reputation: per-faction map (story-tree shape) + legacy "every faction by N".
+  let factions = s.factions;
+  if (Object.keys(report.factionReputationChanges).length > 0) {
+    factions = factions.map(f => report.factionReputationChanges[f.id]
+      ? { ...f, reputation: Math.max(-100, Math.min(100, f.reputation + report.factionReputationChanges[f.id])) }
+      : f);
+  }
+  if (report.legacyReputationChange) {
+    factions = factions.map(f => ({
+      ...f, reputation: Math.max(-100, Math.min(100, f.reputation + report.legacyReputationChange)),
+    }));
+  }
+
+  const stability = Math.max(0, Math.min(100, s.stability + report.stabilityChange));
+  const population = Math.max(0, Math.min(s.maxPopulation, s.population + report.populationChange));
+  const defensePower = Math.max(0, s.defensePower + report.defensePowerChange);
+
+  let buildings = s.buildings;
+  if (Object.keys(report.buildingLevelChanges).length > 0) {
+    buildings = buildings.map(b => report.buildingLevelChanges[b.id]
+      ? { ...b, level: Math.max(0, b.level + report.buildingLevelChanges[b.id]) }
+      : b);
+  }
+
+  // Build the canonical "resolved" EventResolution. `reputationChange` is the
+  // single-number summary for the modal headline; resourceChanges round-trip
+  // verbatim so the ledger animations match exactly what the player committed
+  // to hours ago. Timestamp is *now* (when the consequences actually landed),
+  // not when the choice was made.
+  const summedFactionRep = Object.values(report.factionReputationChanges).reduce((a, b) => a + b, 0);
+  const reputationChange = summedFactionRep + report.legacyReputationChange;
+  const resolution: EventResolution = {
+    id: report.id,
+    eventId: report.eventId,
+    eventTitle: report.eventTitle,
+    eventType: report.eventType,
+    choiceId: report.choiceId,
+    choiceText: report.choiceText,
+    consequence: report.consequence,
+    resourceChanges: report.resourceChanges,
+    reputationChange,
+    critical: report.critical,
+    netScore: report.netScore,
+    timestamp: Date.now(),
+    pending: false,
+  };
+
+  return {
+    state: {
+      ...s,
+      elements,
+      credits,
+      factions,
+      stability,
+      population,
+      defensePower,
+      buildings,
+      pendingReports: s.pendingReports.filter(r => r.id !== report.id),
+      eventLog: [resolution, ...s.eventLog].slice(0, 25),
+    },
+    resolution,
+  };
+}
+
+/**
+ * Phase 3 — drain every pending report whose resolveAt has elapsed and apply
+ * each in chronological order. Returns updated state with the most-recent
+ * resolution flagged as `lastResolvedReport` for the auto-popup.
+ */
+function drainResolvedReports(s: GameState, nowMs: number): GameState {
+  const due = s.pendingReports
+    .filter(r => r.resolveAt <= nowMs)
+    .sort((a, b) => a.resolveAt - b.resolveAt);
+  if (due.length === 0) return s;
+  let working = s;
+  let mostRecent: EventResolution | null = null;
+  for (const report of due) {
+    const out = applyResolvedReport(working, report);
+    working = out.state;
+    mostRecent = out.resolution;
+  }
+  // Only overwrite lastResolvedReport when we actually resolved something —
+  // we don't want to clobber a still-unread report from a previous tick.
+  return mostRecent ? { ...working, lastResolvedReport: mostRecent } : working;
+}
+
+/**
  * Build a 1-3 paragraph narrative summary of what happened while the player
  * was away. Uses crew names + concrete numbers, no jargon. Returns null when
  * the offline window is too short to be worth surfacing.
@@ -568,6 +709,11 @@ interface GameContextType {
   formatCooldown: (ms: number) => string;
   /** Storage fill ratio across all elements, 0..1. */
   storageFillRatio: number;
+  // Phase 3 — Delayed-consequence helpers.
+  /** Acknowledge & clear the most-recently-resolved report (auto-popup). */
+  dismissResolvedReport: () => void;
+  /** ms until a queued report's consequences land. 0 if past due / unknown. */
+  getPendingReportRemaining: (reportId: string) => number;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -635,6 +781,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         if (parsed.factionModifiers == null) parsed.factionModifiers = [];
         if (parsed.lastReturnEvent == null) parsed.lastReturnEvent = null;
         if (parsed.combatCooldowns == null) parsed.combatCooldowns = {};
+        // Phase 3 — back-compat for the delayed-consequence pipeline.
+        if (parsed.pendingReports == null) parsed.pendingReports = [];
+        if (parsed.lastResolvedReport == null) parsed.lastResolvedReport = null;
 
         const offlineTime = (Date.now() - parsed.lastSave) / 1000;
         const cappedTime = Math.min(offlineTime, 86400);
@@ -705,6 +854,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     // before the player ever played online (e.g. researched-on-prestige).
     updated = applyEnergyRegen(updated, seconds);
     updated = expireFactionModifiers(updated, Date.now());
+    // Phase 3 — any pending consequence reports that ripened during the
+    // offline window get applied here in chronological order. The most-
+    // recent resolution becomes `lastResolvedReport` so the Intel screen
+    // surfaces it as a "NEW REPORT" auto-popup on next open.
+    updated = drainResolvedReports(updated, Date.now());
     updated = advanceGameStage(updated);
     return updated;
   };
@@ -797,6 +951,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       // every tick. All three are no-ops when nothing is happening.
       updated = applyEnergyRegen(updated, 1);
       updated = expireFactionModifiers(updated, Date.now());
+      // Phase 3 — drain any pending consequence reports whose resolveAt has
+      // landed since the last tick. The most-recent resolution gets flagged
+      // as `lastResolvedReport` so the Intel screen auto-pops the modal.
+      updated = drainResolvedReports(updated, Date.now());
       updated = advanceGameStage(updated);
       return updated;
     });
@@ -1141,6 +1299,24 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const choice = event.choices.find(c => c.id === choiceId);
       if (!choice) return prev;
 
+      // -------------------------------------------------------------------
+      // Phase 3 — Delayed Consequences (Phase A→B→C).
+      //
+      // Phase A (compute): we still calculate everything up front (critical
+      // roll, merged effects, summed netScore). The numbers are snapshotted
+      // into a PendingReport so the player gets a deterministic outcome
+      // even if game state shifts between now and `resolveAt`.
+      //
+      // Phase B (lock in): we advance the story-tree pointer, reveal new
+      // factions, drop the active event, and queue the report — all
+      // immediate so the narrative feels continuous.
+      //
+      // Phase C (apply): handled by the tick / offline catch-up by calling
+      // `applyResolvedReport` once `Date.now() >= report.resolveAt`. NO
+      // resource / rep / stability / pop / defense / building deltas are
+      // applied here.
+      // -------------------------------------------------------------------
+
       // Compute critical outcome: chance varies by event type.
       const critChanceByType: Record<string, number> = {
         discovery: 0.24, story: 0.18, random: 0.20, threat: 0.16,
@@ -1185,8 +1361,42 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const resScore = Object.values(finalResourceChanges).reduce((acc, v) => acc + (v > 0 ? 1 : v < 0 ? -1 : 0), 0);
       const netScore = resScore * 5 + finalReputationChange;
 
+      // Phase 3 — schedule resolution. Delay scales by event type so urgent
+      // threats land within an hour while slower campaign beats stretch out.
+      const now = Date.now();
+      const delayHours = RESOLVE_DELAY_HOURS_BY_TYPE[event.type] ?? 2;
+      const resolveAt = now + delayHours * 3600 * 1000;
+      const reportId = `${eventId}_${now}`;
+
+      const pendingReport: PendingReport = {
+        id: reportId,
+        eventId,
+        eventTitle: event.title,
+        eventType: event.type,
+        eventDescription: event.description,
+        choiceId,
+        choiceText: choice.text,
+        consequence: choice.consequence,
+        resourceChanges: finalResourceChanges,
+        factionReputationChanges: repChangesByFaction,
+        legacyReputationChange: legacyRepChange,
+        stabilityChange: eff.stabilityChange ?? 0,
+        populationChange: eff.populationChange ?? 0,
+        defensePowerChange: eff.defensePowerChange ?? 0,
+        buildingLevelChanges: eff.buildingLevelChanges ?? {},
+        critical,
+        netScore,
+        decidedAt: now,
+        resolveAt,
+      };
+
+      // `pending: true` flips EventOutcomeModal into "TRANSMISSION QUEUED"
+      // mode — no ledger animation, just the lock-in confirmation and a
+      // countdown. The numbers are still on the resolution object so future
+      // surfaces (e.g., a "preview committed deltas" tooltip) can use them
+      // if we ever want to break ambiguity.
       resolution = {
-        id: `${eventId}_${Date.now()}`,
+        id: reportId,
         eventId,
         eventTitle: event.title,
         eventType: event.type,
@@ -1197,42 +1407,20 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         reputationChange: finalReputationChange,
         critical,
         netScore,
-        timestamp: Date.now(),
+        timestamp: now,
+        pending: true,
+        resolveAt,
       };
 
-      // ---- Apply resource + credit deltas (clamped at floor 0). ----------
-      let elements = [...prev.elements];
-      let credits = prev.credits;
-      Object.keys(finalResourceChanges).forEach(k => {
-        const change = finalResourceChanges[k];
-        if (k === 'credits') { credits = Math.max(0, Math.min(999999, credits + change)); return; }
-        elements = elements.map(e =>
-          e.id === k
-            ? { ...e, quantity: Math.max(0, Math.min(prev.storageCapacity, e.quantity + change)) }
-            : e,
-        );
-      });
-
-      // ---- Apply faction reputation changes. ------------------------------
-      // Story-tree shape is per-faction; legacy shape is "every faction by N".
+      // ---- IMMEDIATE side-effects only (Phase B). -------------------------
+      // Faction discovery is treated as a worldFlag-equivalent so the
+      // diplomacy roster updates the moment the player commits, even though
+      // the rep numbers won't move until Phase C lands. This preserves
+      // narrative continuity ("Krenn just showed up" → they appear NOW).
       let factions = prev.factions;
-      if (Object.keys(repChangesByFaction).length > 0) {
-        factions = factions.map(f => repChangesByFaction[f.id]
-          ? { ...f, reputation: Math.max(-100, Math.min(100, f.reputation + repChangesByFaction[f.id])) }
-          : f);
-      }
-      if (legacyRepChange) {
-        factions = factions.map(f => ({
-          ...f, reputation: Math.max(-100, Math.min(100, f.reputation + legacyRepChange)),
-        }));
-      }
-
-      // Krenn War Fleet event reveals the Krenn Empire on the diplomacy roster.
       if (eventId === 'event_4') {
         factions = factions.map(f => f.id === 'krenn' && !f.discovered ? { ...f, discovered: true } : f);
       }
-      // Phase 5 — any story-tree event that pushes Krenn rep also discovers
-      // them, so the player can actually see the consequence on the roster.
       if (repChangesByFaction['krenn']) {
         factions = factions.map(f => f.id === 'krenn' && !f.discovered ? { ...f, discovered: true } : f);
       }
@@ -1240,26 +1428,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         factions = factions.map(f => f.id === 'vael' && !f.discovered ? { ...f, discovered: true } : f);
       }
 
-      // ---- Apply stability / population / defense deltas. -----------------
-      const stability = Math.max(0, Math.min(100, prev.stability + (eff.stabilityChange ?? 0)));
-      const popDelta = eff.populationChange ?? 0;
-      const population = Math.max(0, Math.min(prev.maxPopulation, prev.population + popDelta));
-      const defensePower = Math.max(0, prev.defensePower + (eff.defensePowerChange ?? 0));
-
-      // ---- Apply per-building level deltas. -------------------------------
-      // Each delta is -1..+1 from the generator, so we clamp at ≥0 and keep
-      // the rest of the building record untouched.
-      let buildings = prev.buildings;
-      const buildingChanges = eff.buildingLevelChanges ?? {};
-      if (Object.keys(buildingChanges).length > 0) {
-        buildings = buildings.map(b => buildingChanges[b.id]
-          ? { ...b, level: Math.max(0, b.level + buildingChanges[b.id]) }
-          : b);
-      }
-
       // ---- Advance the story-tree pointer to the chosen branch. -----------
       // `nextNodeId` is only present on story-tree events. Legacy events
-      // leave the pointer untouched.
+      // leave the pointer untouched. Story advancement is part of Phase B
+      // so the next chapter can be tuned in immediately.
       const nextNodeId = choice.nextNodeId;
       const currentStoryNodeId = nextNodeId
         ? (nextNodeId === STORY_TREE.endNodeId || STORY_TREE.nodesById[nextNodeId]
@@ -1269,17 +1441,14 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
       return {
         ...prev,
-        elements,
-        credits,
         factions,
-        stability,
-        population,
-        defensePower,
-        buildings,
         currentStoryNodeId,
         activeEvents: prev.activeEvents.filter(e => e.id !== eventId),
         completedEvents: [...prev.completedEvents, eventId],
-        eventLog: [resolution, ...prev.eventLog].slice(0, 25),
+        // Append to the queue, oldest-first. Tick / offline catch-up scans
+        // by `resolveAt` independently of insertion order, but keeping the
+        // list chronological makes the Pending Reports UI trivially sortable.
+        pendingReports: [...prev.pendingReports, pendingReport],
       };
     });
     return resolution;
@@ -1678,6 +1847,17 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const formatCooldown = useCallback((ms: number) => formatRemaining(ms), []);
 
+  // Phase 3 — Delayed-consequence helpers.
+  const dismissResolvedReport = useCallback(() => {
+    setState(prev => prev.lastResolvedReport ? { ...prev, lastResolvedReport: null } : prev);
+  }, []);
+
+  const getPendingReportRemaining = useCallback((reportId: string) => {
+    const r = state.pendingReports.find(p => p.id === reportId);
+    if (!r) return 0;
+    return Math.max(0, r.resolveAt - Date.now());
+  }, [state.pendingReports]);
+
   return (
     <GameContext.Provider value={{
       state,
@@ -1711,6 +1891,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       getCombatCooldownRemaining,
       formatCooldown,
       storageFillRatio,
+      dismissResolvedReport,
+      getPendingReportRemaining,
     }}>
       {children}
     </GameContext.Provider>
