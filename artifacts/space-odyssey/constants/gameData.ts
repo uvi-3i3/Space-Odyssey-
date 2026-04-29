@@ -240,9 +240,135 @@ export interface CrewMember {
     unlocksEventOption?: string;
   };
   status: 'active' | 'on_mission' | 'injured' | 'lost';
-  /** 0..5 — grows through relevant activity (future). */
+  /** 0..5 — grows through relevant activity (Phase 4). */
   experienceLevel: number;
   eventHistory: string[];
+  // Phase 4 — temporary status timers. When the wallclock passes the timer,
+  // the tick reverts the crew member back to 'active'. `lost` is permanent.
+  /** Wallclock ms when an `on_mission` crew member returns to active duty. */
+  missionUntil?: number;
+  /** Wallclock ms when an `injured` crew member recovers. */
+  injuredUntil?: number;
+}
+
+// Phase 4 — Crew Recruitment.
+// Recruitable candidates aren't in `state.crew` until the player accepts an
+// offer. Each candidate has an unlock condition the engine checks against
+// state to decide when to surface the offer in the Intel screen.
+
+export type CrewUnlockCondition =
+  | { type: 'tech'; techId: string }
+  | { type: 'reputation'; factionId: string; threshold: number }
+  | { type: 'era'; era: number }
+  | { type: 'story_flag'; flag: string };
+
+export interface RecruitableCandidate {
+  /** The CrewMember template added to state.crew when accepted. */
+  member: CrewMember;
+  /** What gates the offer. */
+  unlock: CrewUnlockCondition;
+  /** Short flavor line shown on the recruitment card. */
+  offerHook: string;
+}
+
+/** Hard cap from the spec — colonies can't manage more than 8 named crew. */
+export const MAX_CREW = 8;
+
+/**
+ * Phase 4 — Recruitable crew pool. None of these are in the starter set;
+ * they unlock through play (research breakthroughs, faction reputation, era
+ * progression). The engine surfaces matching offers in the Crew UI when
+ * their unlock conditions are met and they're not already recruited.
+ */
+export const RECRUITABLE_CREW: RecruitableCandidate[] = [
+  {
+    member: {
+      id: 'vex',
+      name: 'Vex',
+      role: 'scientist',
+      backstory:
+        'A xenobiologist who survived alone on a derelict research station. She speaks four dialects no one in the colony recognizes.',
+      ability: 'Cuts research time by an additional 8%.',
+      abilityEffect: { type: 'research_speed', value: 0.08 },
+      status: 'active',
+      experienceLevel: 2,
+      eventHistory: [],
+    },
+    unlock: { type: 'tech', techId: 'xenobiology' },
+    offerHook: 'A signal traced to Xenobiology research has revealed a survivor.',
+  },
+  {
+    member: {
+      id: 'tahli',
+      name: 'Tahli',
+      role: 'explorer',
+      backstory:
+        'A Vael freighter captain who quietly defected after one trade run too many. She knows shipping lanes nobody else does.',
+      ability: 'Boosts manual mining yields by 6% across all zones.',
+      abilityEffect: { type: 'mining_bonus', value: 0.06 },
+      status: 'active',
+      experienceLevel: 3,
+      eventHistory: [],
+    },
+    unlock: { type: 'reputation', factionId: 'vael', threshold: 50 },
+    offerHook: 'A Vael captain has asked to defect. Your reputation precedes you.',
+  },
+  {
+    member: {
+      id: 'drak',
+      name: 'Drak',
+      role: 'soldier',
+      backstory:
+        'A Krenn-trained warrior who lost his clan in the last border war. He fights like he has nothing left to lose, because he doesn\'t.',
+      ability: 'Adds +20 to colony defense and +5% combat power.',
+      abilityEffect: { type: 'combat_power', value: 20 },
+      status: 'active',
+      experienceLevel: 3,
+      eventHistory: [],
+    },
+    unlock: { type: 'era', era: 3 },
+    offerHook: 'A wandering Krenn warrior has reached the colony. He carries no clan colors.',
+  },
+  {
+    member: {
+      id: 'lira',
+      name: 'Lira',
+      role: 'diplomat',
+      backstory:
+        'A former Krenn envoy who broke ranks rather than declare war on a neutral world. She trades in patience.',
+      ability: 'Unlocks diplomatic options in faction events.',
+      abilityEffect: { type: 'event_option', value: 1, unlocksEventOption: 'diplomat_choice' },
+      status: 'active',
+      experienceLevel: 2,
+      eventHistory: [],
+    },
+    unlock: { type: 'reputation', factionId: 'krenn', threshold: 50 },
+    offerHook: 'A Krenn envoy named Lira has requested asylum in your colony.',
+  },
+];
+
+/**
+ * Phase 4 — Aggregate every active crew member's passive bonuses. Crew on
+ * mission, injured, or lost contribute nothing. Combat power is summed as a
+ * flat addition (matches spec "Rynn +10 defense"); mining and research are
+ * fractional multiplier additions ("+5%" → 0.05).
+ */
+export function computeCrewBonuses(crew: CrewMember[]): {
+  miningBonus: number;
+  researchBonus: number;
+  defenseBonus: number;
+} {
+  let miningBonus = 0;
+  let researchBonus = 0;
+  let defenseBonus = 0;
+  for (const m of crew) {
+    if (m.status !== 'active') continue;
+    const e = m.abilityEffect;
+    if (e.type === 'mining_bonus') miningBonus += e.value;
+    else if (e.type === 'research_speed') researchBonus += e.value;
+    else if (e.type === 'combat_power') defenseBonus += e.value;
+  }
+  return { miningBonus, researchBonus, defenseBonus };
 }
 
 export interface FactionModifier {

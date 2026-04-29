@@ -126,6 +126,23 @@ Choices commit immediately but resource/reputation/stability consequences land h
 - **Pending Reports queue** (Intel → Events tab, above Aftermath Log): each pending report shows a colored type badge, the original event title, the locked-in choice prefixed with `>`, a live countdown ("3h 12m") that re-renders every 30s, an elapsed-progress bar, and a "Resolves at HH:MM" footer. Non-interactive on purpose — the player committed; only time can deliver the outcome.
 - Pending reports persist via `state.pendingReports` and are processed both during foreground ticks and on app re-open via `applyOfflineProgress`, so closing the app doesn't pause the consequence clock.
 
+### Phase 4 — The Commander & Crew System
+Crew are named characters with mechanical impact, not just flavor. Every passive ability in the system actually multiplies/adds to the live numbers, and the roster grows organically through play:
+- **Starting crew** (from background, set in onboarding): Kael the Engineer is always present (+5% mining via `mining_bonus` ability). Soldier background also gets Rynn (+10 defense). Scientist gets Mira (-10% research time). Diplomat gets Sorin (unlocks event option).
+- **Ability wiring** (`computeCrewBonuses` in gameData.ts, used in `recomputeDerivedStats` and `engageCombat`): only `active` crew contribute. `mining_bonus` and `research_speed` add fractional multipliers stacked on top of tech multipliers. `combat_power` adds flat defense to `playerPower` in combat (matches spec wording "Rynn +10 defense"). Bonuses appear immediately when a crew member is recruited and disappear the moment they go on mission, get injured, or are lost.
+- **Recruitment system** (`RECRUITABLE_CREW` pool in gameData.ts): four candidates with concrete unlock conditions surfaced as "RECRUITMENT OPPORTUNITIES" cards in the Intel → Events crew section.
+  - **Vex** (scientist, -8% research) — unlocked by researching `xenobiology`
+  - **Tahli** (explorer, +6% mining) — unlocked at +50 reputation with Vael Merchants
+  - **Drak** (soldier, +20 defense) — unlocked at era 3
+  - **Lira** (diplomat, unlocks diplomatic options) — unlocked at +50 reputation with Krenn Empire
+  - Cap of 8 (`MAX_CREW`). `recruitCrew(id)` validates uniqueness, unlock condition, cap, and recomputes derived stats so passive bonuses kick in instantly.
+- **Status changes**:
+  - **On mission**: every espionage run pulls one matching crew member off-duty for 30 minutes (`scan` prefers scientist/explorer/diplomat; `spy`/`fake` prefers diplomat/explorer; `disrupt` prefers explorer/soldier).
+  - **Injured**: combat losses have a 25% chance to injure an active soldier for 2 hours; their name is appended to the combat log entry.
+  - **Active**: the tick + offline catch-up call `revertExpiredCrewStatuses(state, Date.now())` to flip expired `on_mission`/`injured` back to `active` automatically — recovery doesn't pause when the app is closed.
+- **Experience growth** (`grantCrewExperience` in GameContext): crew level up to a cap of 5 through relevant activity. Research completions grant +1 to a scientist; combat wins +1 to a soldier; pending-report resolutions grant +1 to the role most aligned with the event type (threat → soldier, discovery → scientist, story → diplomat, random → explorer).
+- **Crew UI** (Intel → Events tab): every crew card now shows a status badge (ACTIVE/ON MISSION/INJURED/LOST color-coded), a 5-pip experience bar, full backstory, ability text, and a "recovers in Xm" countdown when off-duty. Cards dim to 78% opacity when inactive. Recruitment offers appear above the roster as legendary-bordered cards with the offer hook line, full backstory, ability preview, and a glowing "RECRUIT [NAME]" button — disappearing once accepted or once the crew cap is hit.
+
 Integration coverage:
 - Planet (`app/(tabs)/index.tsx`) — starfield, rotating planet, scan pulse, zone node press, mining buttons, panel/banner fade-in, codex shimmer
 - Command (`app/(tabs)/command.tsx`) — section pills, era chips, building cards, expand details, construct/upgrade/research buttons, active research glow pulse

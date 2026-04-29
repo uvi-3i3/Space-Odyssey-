@@ -12,6 +12,8 @@ import {
   ENERGY_BASE_MAX, ENERGY_PER_HABITAT_LEVEL, ENERGY_REGEN_PER_SEC,
   ENERGY_COST_BY_MINING, ENERGY_COST_PER_AUTOMINER_YIELD, COMBAT_COOLDOWN_MS,
   PendingReport, RESOLVE_DELAY_HOURS_BY_TYPE,
+  RECRUITABLE_CREW, RecruitableCandidate, CrewUnlockCondition, MAX_CREW,
+  computeCrewBonuses,
 } from '@/constants/gameData';
 import { STORY_TREE, StoryNode } from '@/constants/storyData';
 
@@ -264,6 +266,13 @@ function recomputeDerivedStats(s: GameState): GameState {
   let buildCost = 1.0;
   if (isResearched(s, 'structural_engineering')) buildCost *= 0.8;
 
+  // Phase 4 — crew passive abilities multiply on top of tech multipliers.
+  // Combat power is handled separately as a flat additive in engageCombat
+  // because the spec describes it in flat-defense units, not %.
+  const { miningBonus, researchBonus } = computeCrewBonuses(s.crew);
+  mining *= 1 + miningBonus;
+  research *= 1 + researchBonus;
+
   if (
     s.miningMultiplier === mining &&
     s.researchSpeed === research &&
@@ -278,6 +287,74 @@ function recomputeDerivedStats(s: GameState): GameState {
     combatMultiplier: combat,
     buildingCostMultiplier: buildCost,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Crew lifecycle helpers (pure, module-scoped).
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 4 — Revert any expired temporary statuses back to active. Called from
+ * the tick + the offline catch-up so closing the app doesn't pause crew
+ * recovery. `lost` is permanent and never reverted here.
+ */
+function revertExpiredCrewStatuses(s: GameState, nowMs: number): GameState {
+  let changed = false;
+  const crew = s.crew.map(m => {
+    if (m.status === 'on_mission' && m.missionUntil != null && nowMs >= m.missionUntil) {
+      changed = true;
+      return { ...m, status: 'active' as const, missionUntil: undefined };
+    }
+    if (m.status === 'injured' && m.injuredUntil != null && nowMs >= m.injuredUntil) {
+      changed = true;
+      return { ...m, status: 'active' as const, injuredUntil: undefined };
+    }
+    return m;
+  });
+  return changed ? { ...s, crew } : s;
+}
+
+/**
+ * Phase 4 — Grant +1 experience to the first active crew member matching a
+ * role. Capped at 5. Returns a new state if a grant happened, else the same
+ * state ref. Called when relevant activity completes (research → scientist,
+ * combat win → soldier, event by type → matching role).
+ */
+function grantCrewExperience(s: GameState, role: CrewMember['role']): GameState {
+  const idx = s.crew.findIndex(m => m.role === role && m.status === 'active' && m.experienceLevel < 5);
+  if (idx < 0) return s;
+  const crew = [...s.crew];
+  crew[idx] = { ...crew[idx], experienceLevel: Math.min(5, crew[idx].experienceLevel + 1) };
+  return { ...s, crew };
+}
+
+/** Phase 4 — Resolve the role most "owed" experience by a given event type. */
+function eventTypeToCrewRole(t: 'random' | 'story' | 'discovery' | 'threat'): CrewMember['role'] | null {
+  if (t === 'threat') return 'soldier';
+  if (t === 'discovery') return 'scientist';
+  if (t === 'story') return 'diplomat';
+  return 'explorer';
+}
+
+/**
+ * Phase 4 — Test whether a recruitable candidate's unlock condition is met.
+ * Pure: only reads from state, never mutates.
+ */
+function isCrewUnlockMet(s: GameState, unlock: CrewUnlockCondition): boolean {
+  switch (unlock.type) {
+    case 'tech':
+      return isResearched(s, unlock.techId);
+    case 'reputation': {
+      const f = s.factions.find(x => x.id === unlock.factionId);
+      return !!f && f.discovered && f.reputation >= unlock.threshold;
+    }
+    case 'era':
+      return s.era >= unlock.era;
+    case 'story_flag':
+      return s.worldFlags.includes(unlock.flag);
+    default:
+      return false;
+  }
 }
 
 /** Unlock zones 4–8 as their gating techs are completed. */
@@ -611,6 +688,12 @@ function drainResolvedReports(s: GameState, nowMs: number): GameState {
     const out = applyResolvedReport(working, report);
     working = out.state;
     mostRecent = out.resolution;
+    // Phase 4 — grant +1 exp to the crew role most aligned with this event
+    // type when its consequences land. Threats grow soldiers, discoveries
+    // grow scientists, story beats grow diplomats, random events grow
+    // explorers. Capped at 5 inside grantCrewExperience.
+    const role = eventTypeToCrewRole(report.eventType);
+    if (role) working = grantCrewExperience(working, role);
   }
   // Only overwrite lastResolvedReport when we actually resolved something —
   // we don't want to clobber a still-unread report from a previous tick.
@@ -714,6 +797,11 @@ interface GameContextType {
   dismissResolvedReport: () => void;
   /** ms until a queued report's consequences land. 0 if past due / unknown. */
   getPendingReportRemaining: (reportId: string) => number;
+  // Phase 4 — Crew recruitment.
+  /** Currently available recruitment offers (unlock met + not already recruited). */
+  recruitmentOffers: RecruitableCandidate[];
+  /** Accept a recruitment offer. Adds the candidate to state.crew. */
+  recruitCrew: (crewId: string) => { success: boolean; message: string };
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -854,6 +942,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     // before the player ever played online (e.g. researched-on-prestige).
     updated = applyEnergyRegen(updated, seconds);
     updated = expireFactionModifiers(updated, Date.now());
+    // Phase 4 — revert any crew temporary statuses that ripened during the
+    // offline window. Recovery doesn't pause when the app is closed.
+    updated = revertExpiredCrewStatuses(updated, Date.now());
     // Phase 3 — any pending consequence reports that ripened during the
     // offline window get applied here in chronological order. The most-
     // recent resolution becomes `lastResolvedReport` so the Intel screen
@@ -939,7 +1030,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
       // When research finishes mid-tick, recompute all tech-driven derived
       // stats, zone unlocks, era advancement, and faction discovery in one pass.
+      // Phase 4 — also grant +1 exp to a scientist crew member; the breakthrough
+      // is partly theirs.
       if (researchCompleted) {
+        updated = grantCrewExperience(updated, 'scientist');
         updated = applyProgression(updated);
       }
       // Phase 4 — Auto-Miner production runs every tick (1s of game time).
@@ -951,6 +1045,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       // every tick. All three are no-ops when nothing is happening.
       updated = applyEnergyRegen(updated, 1);
       updated = expireFactionModifiers(updated, Date.now());
+      // Phase 4 — revert any expired temporary crew statuses (mission/injury).
+      // Cheap no-op when no timers are running.
+      updated = revertExpiredCrewStatuses(updated, Date.now());
       // Phase 3 — drain any pending consequence reports whose resolveAt has
       // landed since the last tick. The most-recent resolution gets flagged
       // as `lastResolvedReport` so the Intel screen auto-pops the modal.
@@ -1490,7 +1587,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         };
         return prev;
       }
-      const rawPower = prev.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0) + prev.defensePower;
+      // Phase 4 — active soldier crew with `combat_power` add a flat defense
+      // contribution on top of buildings. Stacks with multiple soldiers.
+      const { defenseBonus: crewDefense } = computeCrewBonuses(prev.crew);
+      const rawPower = prev.units.reduce((sum, u) => sum + u.count * (u.attack + u.defense) / 2, 0)
+        + prev.defensePower
+        + crewDefense;
       const playerPower = rawPower * prev.combatMultiplier;
 
       const eraScale = (prev.era - 1) * 40;
@@ -1542,7 +1644,28 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const newCooldowns = strategy === 'retreat'
         ? prev.combatCooldowns
         : { ...prev.combatCooldowns, [factionId]: now + COMBAT_COOLDOWN_MS };
-      return { ...prev, factions, combatLog: [entry, ...prev.combatLog].slice(0, 20), combatCooldowns: newCooldowns, achievements: updatedAchievements };
+      let next: GameState = { ...prev, factions, combatLog: [entry, ...prev.combatLog].slice(0, 20), combatCooldowns: newCooldowns, achievements: updatedAchievements };
+      // Phase 4 — combat outcome -> crew side-effects.
+      // Win: +1 exp to a soldier (it was their drill). Loss: 25% chance an
+      // active soldier is injured for 2 hours and unavailable.
+      if (outcome === 'win') {
+        next = grantCrewExperience(next, 'soldier');
+      } else if (outcome === 'loss') {
+        const soldierIdx = next.crew.findIndex(m => m.role === 'soldier' && m.status === 'active');
+        if (soldierIdx >= 0 && Math.random() < 0.25) {
+          const crew = [...next.crew];
+          crew[soldierIdx] = {
+            ...crew[soldierIdx],
+            status: 'injured',
+            injuredUntil: now + 2 * 60 * 60 * 1000,
+          };
+          next = { ...next, crew };
+          // Mention it in the combat entry so the player knows.
+          entry = { ...(entry as CombatEntry), details: `${(entry as CombatEntry).details} ${crew[soldierIdx].name} was injured.` };
+          next.combatLog = [entry, ...next.combatLog.slice(1)];
+        }
+      }
+      return next;
     });
     return entry as unknown as CombatEntry;
   }, []);
@@ -1566,10 +1689,36 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       details: missionDescriptions[mission],
     };
 
-    setState(prev => ({
-      ...prev,
-      espionageLog: [entry, ...prev.espionageLog].slice(0, 20),
-    }));
+    setState(prev => {
+      // Phase 4 — espionage missions tie up a crew member if a relevant role
+      // is on hand. Explorer/diplomat (covert ops, infiltration) preferred,
+      // scientist as a fallback for `scan`. They're back on duty in 30 min.
+      // Pick the lowest-indexed eligible active crew so it's deterministic.
+      const preferRole: CrewMember['role'][] = mission === 'scan'
+        ? ['scientist', 'explorer', 'diplomat']
+        : mission === 'spy' || mission === 'fake'
+          ? ['diplomat', 'explorer']
+          : ['explorer', 'soldier']; // disrupt = sabotage
+      let crew = prev.crew;
+      for (const role of preferRole) {
+        const idx = crew.findIndex(m => m.role === role && m.status === 'active');
+        if (idx >= 0) {
+          const updated = [...crew];
+          updated[idx] = {
+            ...updated[idx],
+            status: 'on_mission',
+            missionUntil: Date.now() + 30 * 60 * 1000,
+          };
+          crew = updated;
+          break;
+        }
+      }
+      return {
+        ...prev,
+        crew,
+        espionageLog: [entry, ...prev.espionageLog].slice(0, 20),
+      };
+    });
 
     return entry;
   }, []);
@@ -1858,6 +2007,45 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     return Math.max(0, r.resolveAt - Date.now());
   }, [state.pendingReports]);
 
+  // Phase 4 — Crew Recruitment.
+  // Derived live: which candidates have their unlock condition met AND
+  // aren't already in state.crew. Skipped entirely once we hit MAX_CREW so
+  // the player isn't tempted by offers they can't accept.
+  const recruitmentOffers: RecruitableCandidate[] = (() => {
+    if (state.crew.length >= MAX_CREW) return [];
+    const recruited = new Set(state.crew.map(m => m.id));
+    return RECRUITABLE_CREW.filter(c => !recruited.has(c.member.id) && isCrewUnlockMet(state, c.unlock));
+  })();
+
+  const recruitCrew = useCallback((crewId: string) => {
+    let result: { success: boolean; message: string } = { success: false, message: '' };
+    setState(prev => {
+      if (prev.crew.length >= MAX_CREW) {
+        result = { success: false, message: `Crew is at the cap (${MAX_CREW}). Mourn or release someone first.` };
+        return prev;
+      }
+      if (prev.crew.some(m => m.id === crewId)) {
+        result = { success: false, message: 'Already on the roster.' };
+        return prev;
+      }
+      const candidate = RECRUITABLE_CREW.find(c => c.member.id === crewId);
+      if (!candidate) {
+        result = { success: false, message: 'Unknown candidate.' };
+        return prev;
+      }
+      if (!isCrewUnlockMet(prev, candidate.unlock)) {
+        result = { success: false, message: 'Unlock condition no longer met.' };
+        return prev;
+      }
+      // Recompute derived stats so the new crew's passive bonus takes effect
+      // immediately (mining/research multipliers are tech * crew product).
+      const next = recomputeDerivedStats({ ...prev, crew: [...prev.crew, { ...candidate.member }] });
+      result = { success: true, message: `${candidate.member.name} has joined the crew.` };
+      return next;
+    });
+    return result;
+  }, []);
+
   return (
     <GameContext.Provider value={{
       state,
@@ -1893,6 +2081,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       storageFillRatio,
       dismissResolvedReport,
       getPendingReportRemaining,
+      recruitmentOffers,
+      recruitCrew,
     }}>
       {children}
     </GameContext.Provider>

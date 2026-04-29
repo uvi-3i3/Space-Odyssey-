@@ -58,6 +58,7 @@ export default function IntelScreen() {
     claimDailyReward, performPrestige, getFactionRelationship,
     getCombatCooldownRemaining, formatCooldown,
     dismissResolvedReport, getPendingReportRemaining,
+    recruitmentOffers, recruitCrew,
   } = useGame();
   const colors = useColors();
   const [section, setSection] = useState<IntelSection>('events');
@@ -825,12 +826,92 @@ export default function IntelScreen() {
 
             {combatMode === 'fleet' && (
               <FadeSlideIn key="fleet" duration={360} offset={12}>
-                {/* Phase 6 — Crew roster. These are story characters, not
-                    combat units; they show up by name in In-Your-Absence
-                    reports and onboarding. Always at least one (Kael). */}
+                {/* Phase 4 — Recruitment Opportunities. Shown above the crew
+                    roster ONLY when at least one candidate's unlock condition
+                    is met. Each card has the candidate's name, role, hook
+                    text, ability, full backstory, and a RECRUIT button. */}
+                {recruitmentOffers.length > 0 && (
+                  <>
+                    <View style={styles.recruitHeader}>
+                      <Feather name="user-plus" size={11} color={colors.legendary} />
+                      <Text style={[styles.sectionTitle, { color: colors.legendary, marginLeft: 6 }]}>
+                        RECRUITMENT OPPORTUNITIES ({recruitmentOffers.length})
+                      </Text>
+                    </View>
+                    {recruitmentOffers.map((offer, idx) => {
+                      const m = offer.member;
+                      const roleColor =
+                        m.role === 'engineer' ? colors.primary
+                        : m.role === 'soldier' ? colors.destructive
+                        : m.role === 'scientist' ? colors.secondary
+                        : m.role === 'diplomat' ? colors.legendary
+                        : colors.warning;
+                      const icon =
+                        m.role === 'engineer' ? 'tool'
+                        : m.role === 'soldier' ? 'shield'
+                        : m.role === 'scientist' ? 'cpu'
+                        : m.role === 'diplomat' ? 'message-circle'
+                        : 'eye';
+                      return (
+                        <FadeSlideIn key={offer.member.id} delay={idx * 50} duration={320} offset={8}>
+                          <View style={[styles.recruitCard, { borderColor: colors.legendary, backgroundColor: colors.card }]}>
+                            <View style={styles.recruitTopRow}>
+                              <View style={[styles.crewIcon, { borderColor: roleColor, backgroundColor: roleColor + '14' }]}>
+                                <Feather name={icon as any} size={14} color={roleColor} />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={[styles.crewName, { color: colors.foreground }]}>
+                                  {m.name.toUpperCase()}
+                                </Text>
+                                <Text style={[styles.crewRole, { color: roleColor }]}>
+                                  {m.role.toUpperCase()}
+                                </Text>
+                              </View>
+                              <View style={[styles.recruitBadge, { borderColor: colors.legendary, backgroundColor: colors.legendary + '18' }]}>
+                                <Text style={[styles.recruitBadgeText, { color: colors.legendary }]}>OFFER</Text>
+                              </View>
+                            </View>
+                            <Text style={[styles.recruitHook, { color: colors.legendary }]}>
+                              {offer.offerHook}
+                            </Text>
+                            <Text style={[styles.crewBio, { color: colors.mutedForeground }]}>
+                              {m.backstory}
+                            </Text>
+                            <Text style={[styles.crewBio, { color: colors.secondary, marginTop: 2 }]}>
+                              ✦ {m.ability}
+                            </Text>
+                            <PressableScale
+                              style={[styles.recruitAcceptBtn, { backgroundColor: colors.legendary }]}
+                              onPress={() => {
+                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+                                recruitCrew(offer.member.id);
+                              }}
+                              glow
+                              glowColor={colors.legendary}
+                              scaleTo={0.94}
+                            >
+                              <Feather name="user-plus" size={12} color="#FFFFFF" />
+                              <Text style={[styles.recruitAcceptText, { color: '#FFFFFF' }]}>
+                                RECRUIT {m.name.toUpperCase()}
+                              </Text>
+                            </PressableScale>
+                          </View>
+                        </FadeSlideIn>
+                      );
+                    })}
+                  </>
+                )}
+
+                {/* Phase 6 + Phase 4 — Crew roster. These are story characters,
+                    not combat units. Now also shows live status badge (active
+                    / on mission / injured / lost) and a 1-5 experience pip
+                    bar that grows through relevant activity. Always at least
+                    one (Kael). */}
                 {state.crew.length > 0 && (
                   <>
-                    <Text style={[styles.sectionTitle, { color: colors.foreground }]}>COMMAND CREW</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.foreground, marginTop: recruitmentOffers.length > 0 ? 12 : 0 }]}>
+                      COMMAND CREW ({state.crew.length}/8)
+                    </Text>
                     {state.crew.map((member, idx) => {
                       const roleColor =
                         member.role === 'engineer' ? colors.primary
@@ -844,25 +925,81 @@ export default function IntelScreen() {
                         : member.role === 'scientist' ? 'cpu'
                         : member.role === 'diplomat' ? 'message-circle'
                         : 'eye';
+                      // Phase 4 — derive status display.
+                      const isActive = member.status === 'active';
+                      const statusColor =
+                        member.status === 'active' ? colors.secondary
+                        : member.status === 'on_mission' ? colors.primary
+                        : member.status === 'injured' ? colors.warning
+                        : colors.destructive;
+                      const statusLabel =
+                        member.status === 'active' ? 'ACTIVE'
+                        : member.status === 'on_mission' ? 'ON MISSION'
+                        : member.status === 'injured' ? 'INJURED'
+                        : 'LOST';
+                      // Format the recovery countdown ("returns in 22m") if
+                      // there's a timer. Pure-derived; refreshes on re-render.
+                      const recoveryUntil = member.status === 'on_mission'
+                        ? member.missionUntil
+                        : member.status === 'injured'
+                          ? member.injuredUntil
+                          : undefined;
+                      const recoveryRemaining = recoveryUntil
+                        ? Math.max(0, recoveryUntil - Date.now())
+                        : 0;
+                      const recoveryLabel = recoveryRemaining > 0
+                        ? `recovers in ${formatPendingShort(recoveryRemaining)}`
+                        : null;
                       return (
                         <FadeSlideIn key={member.id} delay={idx * 40} duration={300} offset={6}>
-                          <View style={[styles.crewCard, { borderColor: roleColor + '55', backgroundColor: colors.card }]}>
+                          <View style={[styles.crewCard, {
+                            borderColor: roleColor + '55',
+                            backgroundColor: colors.card,
+                            opacity: isActive ? 1 : 0.78,
+                          }]}>
                             <View style={[styles.crewIcon, { borderColor: roleColor, backgroundColor: roleColor + '14' }]}>
                               <Feather name={icon as any} size={14} color={roleColor} />
                             </View>
                             <View style={{ flex: 1 }}>
-                              <Text style={[styles.crewName, { color: colors.foreground }]}>
-                                {member.name.toUpperCase()}
-                              </Text>
-                              <Text style={[styles.crewRole, { color: roleColor }]}>
-                                {member.role.toUpperCase()}
-                              </Text>
+                              <View style={styles.crewHeaderRow}>
+                                <Text style={[styles.crewName, { color: colors.foreground }]}>
+                                  {member.name.toUpperCase()}
+                                </Text>
+                                <View style={[styles.crewStatusBadge, { borderColor: statusColor, backgroundColor: statusColor + '14' }]}>
+                                  <Text style={[styles.crewStatusText, { color: statusColor }]}>{statusLabel}</Text>
+                                </View>
+                              </View>
+                              <View style={styles.crewSubRow}>
+                                <Text style={[styles.crewRole, { color: roleColor }]}>
+                                  {member.role.toUpperCase()}
+                                </Text>
+                                {/* Phase 4 — experience pips. 5 dots, filled per level. */}
+                                <View style={styles.crewExpRow}>
+                                  {[1, 2, 3, 4, 5].map(i => (
+                                    <View
+                                      key={i}
+                                      style={[
+                                        styles.crewExpPip,
+                                        {
+                                          backgroundColor: i <= member.experienceLevel ? roleColor : colors.border,
+                                          borderColor: i <= member.experienceLevel ? roleColor : colors.border,
+                                        },
+                                      ]}
+                                    />
+                                  ))}
+                                </View>
+                              </View>
                               <Text style={[styles.crewBio, { color: colors.mutedForeground }]}>
                                 {member.backstory}
                               </Text>
                               <Text style={[styles.crewBio, { color: colors.secondary, marginTop: 2 }]}>
                                 ✦ {member.ability}
                               </Text>
+                              {recoveryLabel && (
+                                <Text style={[styles.crewRecovery, { color: statusColor }]}>
+                                  ⌛ {recoveryLabel}
+                                </Text>
+                              )}
                             </View>
                           </View>
                         </FadeSlideIn>
@@ -1364,6 +1501,32 @@ const styles = StyleSheet.create({
   crewName: { fontSize: 12, fontFamily: 'Inter_700Bold', letterSpacing: 1 },
   crewRole: { fontSize: 9, fontFamily: 'Inter_400Regular', letterSpacing: 1, marginTop: 1 },
   crewBio: { fontSize: 10, fontFamily: 'Inter_400Regular', marginTop: 4, lineHeight: 14 },
+  // Phase 4 — crew header row (name + status badge inline) and exp pip strip.
+  crewHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  crewSubRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 1 },
+  crewStatusBadge: {
+    paddingHorizontal: 5, paddingVertical: 1.5, borderRadius: 3, borderWidth: 1,
+  },
+  crewStatusText: { fontSize: 8, fontFamily: 'SpaceMono_700Bold', letterSpacing: 1 },
+  crewExpRow: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  crewExpPip: { width: 6, height: 6, borderRadius: 3, borderWidth: 1 },
+  crewRecovery: { fontSize: 9, fontFamily: 'SpaceMono_400Regular', letterSpacing: 0.5, marginTop: 3 },
+  // Phase 4 — recruitment offer cards.
+  recruitHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, marginTop: 4 },
+  recruitCard: {
+    borderWidth: 1.5, borderRadius: 8, padding: 12, gap: 8, marginBottom: 8,
+  },
+  recruitTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  recruitBadge: {
+    paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4, borderWidth: 1,
+  },
+  recruitBadgeText: { fontSize: 9, fontFamily: 'SpaceMono_700Bold', letterSpacing: 1 },
+  recruitHook: { fontSize: 11, fontFamily: 'Inter_500Medium', fontStyle: 'italic', lineHeight: 15 },
+  recruitAcceptBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 11, borderRadius: 6, marginTop: 4,
+  },
+  recruitAcceptText: { fontSize: 12, fontFamily: 'Inter_700Bold', letterSpacing: 1.5 },
   combatResult: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderRadius: 8, padding: 12 },
   combatResultTitle: { fontSize: 13, fontFamily: 'Inter_700Bold' },
   combatResultDesc: { fontSize: 11, fontFamily: 'Inter_400Regular', lineHeight: 16 },
